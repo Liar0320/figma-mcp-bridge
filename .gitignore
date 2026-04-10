@@ -173,6 +173,9 @@ go.work.sum
 # env file
 .env
 
+# Lock files
+/server/package-lock.json
+
 # Server binaries (legacy Go builds)
 binaries/
 
@@ -184,3 +187,6 @@ server/dist/
 .vscode/
 
 .claude/
+
+# local documentations
+docs/
