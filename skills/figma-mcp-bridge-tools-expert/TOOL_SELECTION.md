@@ -1,0 +1,37 @@
+## Tool Selection
+
+### 按目标选工具
+
+| 目标 | 首选工具 | 何时再补别的 |
+| --- | --- | --- |
+| 看当前页完整树 | `get_document` | 结果太大或只关心局部时改用 `get_design_context` |
+| 看当前选中节点 | `get_selection` | 需要更多父子结构时补 `get_design_context` |
+| 看一个明确 nodeId | `get_node` | 先确认 `nodeId` 来自别的查询结果 |
+| 看文件名、页面列表、当前页信息 | `get_metadata` | 通常作为 discovery 起点 |
+| 看压缩后的局部设计结构 | `get_design_context` | 可传 `depth`，默认比 `get_document` 更适合 AI 理解 |
+| 看本地 paint/text/effect/grid styles | `get_styles` | 若要变量与 modes，另调 `get_variable_defs` |
+| 看变量集合、modes、alias、token 值 | `get_variable_defs` | 和 `get_styles` 互补，不替代 |
+| 要图像二进制结果 | `get_screenshot` | 返回 base64，不落盘 |
+| 要直接保存文件 | `save_screenshots` | 需要严格处理 `outputPath`、格式和覆盖规则 |
+
+### 推荐工作流
+
+#### 场景 1：理解当前设计
+
+`get_metadata` -> `get_selection` -> `get_design_context`
+
+如果没有选区，再决定用 `get_document` 还是 `get_design_context(depth=2+)` 看当前页。
+
+#### 场景 2：深挖单个节点
+
+先从 `get_selection` / `get_document` / `get_design_context` 拿到合法 `nodeId` -> `get_node`
+
+#### 场景 3：读设计系统资产
+
+`get_styles` + `get_variable_defs`
+
+前者偏本地样式，后者偏变量集合和 modes，不要只调一个就声称“拿到了全部 token”。
+
+#### 场景 4：导出图像
+
+如果后续流程自己处理图片内容，用 `get_screenshot`。如果用户明确要本地文件，用 `save_screenshots`。
