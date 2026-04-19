@@ -13,6 +13,11 @@
 | 看变量集合、modes、alias、token 值 | `get_variable_defs` | 和 `get_styles` 互补，不替代 |
 | 要图像二进制结果 | `get_screenshot` | 返回 base64，不落盘 |
 | 要直接保存文件 | `save_screenshots` | 需要严格处理 `outputPath`、格式和覆盖规则 |
+| 创建 frame/text/rectangle | `create_frame` / `create_text` / `create_rectangle` | 多步创建用 `batch_mutation` + `tmp:` 引用 |
+| 修改节点属性 | 对应 setter（`set_fills`、`set_position` 等） | 先确认有合法 `nodeId`；多属性改同一节点可用 `batch_mutation` |
+| 查找当前页节点 | `find_nodes` | 支持按 name/key/parentId 过滤 |
+| 有序批量写操作 | `batch_mutation` | 最多 100 个操作，部分失败不回滚 |
+| 删除节点 | `delete_node` | 不可逆，确认 `nodeId` 正确再执行 |
 
 ### 推荐工作流
 
@@ -35,3 +40,7 @@
 #### 场景 4：导出图像
 
 如果后续流程自己处理图片内容，用 `get_screenshot`。如果用户明确要本地文件，用 `save_screenshots`。
+
+#### 场景 5：写入节点
+
+先确认目标 `nodeId` 来源（`get_selection`、`find_nodes` 或已知 ID）。单个属性修改用对应 setter。多步操作（创建 + 修改 + 嵌套）用 `batch_mutation` + `tmp:` 引用。
