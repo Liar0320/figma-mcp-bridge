@@ -1,6 +1,6 @@
 ## Figma MCP Bridge Skills
 
-这套 repo-local skills 面向 `/Users/was/Desktop/Lichenghuan/code/figma-mcp-bridge`，用于把这个 MCP 仓库的真实调用经验沉淀成可复用的触发式指导，而不是把 [README.md](/Users/was/Desktop/Lichenghuan/code/figma-mcp-bridge/README.md) 换个说法重写一遍。
+这套 repo-local skills 面向 `figma-mcp-bridge` 仓库，用于把这个 MCP 仓库的真实调用经验沉淀成可复用的触发式指导，而不是把 [README.md](../README.md) 换个说法重写一遍。
 
 ### 为什么拆成多 skill
 
