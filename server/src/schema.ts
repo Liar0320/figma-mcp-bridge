@@ -64,6 +64,22 @@ const paddingSchema = z.object({
   left: z.number().nonnegative().optional(),
 });
 
+const tokenGroup = z.enum(["color", "typography", "effect", "grid", "spacing", "radius", "size", "opacity", "unknown"]);
+const tokenSource = z.enum(["variable", "style"]);
+const variableType = z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]);
+const styleType = z.enum(["paint", "text", "effect", "grid"]);
+const designTokenInput = z.object({
+  name: z.string().min(1),
+  group: tokenGroup,
+  source: tokenSource.optional(),
+  value: z.unknown(),
+  valuesByMode: z.record(z.string(), z.unknown()).optional(),
+  variableType: variableType.optional(),
+  styleType: styleType.optional(),
+  collectionName: z.string().min(1).optional(),
+  description: z.string().optional(),
+});
+
 const nodeName = z
   .string()
   .refine((value) => value.trim().length > 0, "Name must not be empty or whitespace only");
@@ -165,6 +181,35 @@ export const toolInputSchemas = {
       .max(200)
       .optional()
       .describe("Maximum proposals to return. Default 50."),
+  }),
+
+  create_design_tokens: z.object({
+    tokens: z
+      .array(designTokenInput)
+      .min(1)
+      .max(100)
+      .describe("Design tokens to create. Defaults to dry-run preview; actual creation requires dryRun=false."),
+    dryRun: z
+      .boolean()
+      .optional()
+      .describe("Preview only by default. Set explicitly to false to create variables/styles in Figma."),
+    collectionName: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Default variable collection name. Default Design Tokens."),
+    collectionStrategy: z
+      .enum(["upsert-by-name", "create-new"])
+      .optional()
+      .describe("How to choose/create a variable collection. Default upsert-by-name."),
+    modeStrategy: z
+      .enum(["use-default", "create-missing"])
+      .optional()
+      .describe("Mode handling strategy. First implementation writes default mode values."),
+    conflictStrategy: z
+      .enum(["error", "skip"])
+      .optional()
+      .describe("What to do if a token path/value already exists. Default error."),
   }),
 
   get_screenshot: z.object({
@@ -307,6 +352,7 @@ const rpcToArgs: Record<
   get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
   audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   propose_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
+  create_design_tokens: (_nodeIds, params) => ({ ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
