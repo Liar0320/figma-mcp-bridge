@@ -1,4 +1,4 @@
-import { collectDesignTokens, normalizeTokenPath, type NormalizedToken, type TokenGroup } from "./tokens";
+import { collectDesignTokens, normalizeTokenPath, normalizeTokenSegment, type NormalizedToken, type TokenGroup } from "./tokens";
 
 export type CreateDesignTokenSource = "variable" | "style";
 export type CreateDesignTokenVariableType = "COLOR" | "FLOAT" | "STRING" | "BOOLEAN";
@@ -184,6 +184,13 @@ const ensureCollection = async (
   return figma.variables.createVariableCollection(name);
 };
 
+export function variableNameForCreatedToken(group: TokenGroup, name: string, variableType: CreateDesignTokenVariableType): string {
+  if (variableType !== "FLOAT") return name;
+  if (!["spacing", "radius", "size", "opacity"].includes(group)) return name;
+  const firstSegment = normalizeTokenSegment(name.split("/")[0] ?? "");
+  return firstSegment === group ? name : `${group}/${name}`;
+}
+
 const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
   if (item.styleType === "paint") {
     const style = figma.createPaintStyle();
@@ -352,7 +359,8 @@ export async function createDesignTokens(options: CreateDesignTokensOptions): Pr
             collection = await ensureCollection(item.collectionName, collectionStrategy);
             collectionCache.set(item.collectionName, collection);
           }
-          const variable = figma.variables.createVariable(item.name, collection, item.variableType);
+          const variableName = variableNameForCreatedToken(item.group, item.name, item.variableType);
+          const variable = figma.variables.createVariable(variableName, collection, item.variableType);
           variable.setValueForMode(collection.defaultModeId, toVariableValue(firstTokenValue(item as CreateDesignTokenInput), item.variableType));
           item.status = "created";
           item.figmaId = variable.id;

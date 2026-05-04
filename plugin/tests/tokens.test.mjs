@@ -39,7 +39,14 @@ function testDuplicatePathsAreDisambiguatedDeterministically() {
   assert.equal(new Set(tokens.map((token) => token.path)).size, tokens.length);
 }
 
+function testGroupPrefixedNamesDoNotDuplicateGroup() {
+  assert.equal(normalizeTokenPath("radius", "radius/sm"), "radius.sm");
+  assert.equal(normalizeTokenPath("spacing", "spacing/md"), "spacing.md");
+  assert.equal(normalizeTokenPath("size", "size/card"), "size.card");
+}
+
 testChineseSegmentsArePreserved();
 testDuplicatePathsAreDisambiguatedDeterministically();
+testGroupPrefixedNamesDoNotDuplicateGroup();
 
-console.log("tokens.test.mjs: 2 passed");
+console.log("tokens.test.mjs: 3 passed");

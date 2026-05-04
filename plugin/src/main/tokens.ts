@@ -82,7 +82,8 @@ export function normalizeTokenPath(group: TokenGroup, figmaName: string): string
     .split("/")
     .map(normalizeTokenSegment)
     .filter(Boolean);
-  return [group, ...parts].join(".");
+  const pathParts = parts[0] === group ? parts.slice(1) : parts;
+  return [group, ...pathParts].join(".");
 }
 
 function hashTokenIdentity(value: string): string {
