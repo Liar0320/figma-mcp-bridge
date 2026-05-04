@@ -1,5 +1,6 @@
 import { serializeNode } from "./serializer";
 import { collectDesignTokenAudit } from "./tokenAudit";
+import { collectDesignTokenProposals } from "./tokenPropose";
 import { collectDesignTokens, summarizeTokens } from "./tokens";
 import { collectTokenUsage } from "./tokenUsage";
 import { handleWriteRequest, serializeWriteError } from "./write";
@@ -15,6 +16,7 @@ type RequestType =
   | "get_design_tokens"
   | "get_token_usage"
   | "audit_design_tokens"
+  | "propose_design_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -46,6 +48,10 @@ type ServerRequest = {
     depth?: number;
     minCoverage?: number;
     includeUnusedTokens?: boolean;
+    minOccurrences?: number;
+    includeExactValueMatches?: boolean;
+    includeDuplicateTokenValues?: boolean;
+    maxProposals?: number;
   };
 };
 
@@ -67,6 +73,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_design_tokens",
   "get_token_usage",
   "audit_design_tokens",
+  "propose_design_tokens",
   "get_screenshot",
 ]);
 
@@ -334,6 +341,18 @@ const handleRequest = async (
           data: await collectDesignTokenAudit(request.nodeIds, {
             minCoverage: request.params?.minCoverage,
             includeUnusedTokens: request.params?.includeUnusedTokens,
+          }),
+        };
+      }
+      case "propose_design_tokens": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await collectDesignTokenProposals(request.nodeIds, {
+            minOccurrences: request.params?.minOccurrences,
+            includeExactValueMatches: request.params?.includeExactValueMatches,
+            includeDuplicateTokenValues: request.params?.includeDuplicateTokenValues,
+            maxProposals: request.params?.maxProposals,
           }),
         };
       }

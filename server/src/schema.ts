@@ -137,6 +137,36 @@ export const toolInputSchemas = {
       .describe("Whether to include UNUSED_TOKEN findings for tokens not referenced in the scanned scope. Default true."),
   }),
 
+  propose_design_tokens: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .optional()
+      .describe(
+        "Optional node IDs to analyze. If omitted, analyzes current selection when non-empty, otherwise the current page."
+      ),
+    minOccurrences: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Minimum repeated occurrences required for a value-based token proposal. Default 2."),
+    includeExactValueMatches: z
+      .boolean()
+      .optional()
+      .describe("Whether to include proposals for repeated exact-value matches to existing tokens. Default false."),
+    includeDuplicateTokenValues: z
+      .boolean()
+      .optional()
+      .describe("Whether to include duplicate existing token value consolidation proposals. Default true."),
+    maxProposals: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Maximum proposals to return. Default 50."),
+  }),
+
   get_screenshot: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -276,6 +306,7 @@ const rpcToArgs: Record<
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
   audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
+  propose_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
