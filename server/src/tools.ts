@@ -140,6 +140,14 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "get_design_tokens",
+    "Get normalized design tokens from local Figma variables and styles. Returns AI-friendly token paths, values, modes, sources, and summary counts.",
+    async (): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_design_tokens"));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
