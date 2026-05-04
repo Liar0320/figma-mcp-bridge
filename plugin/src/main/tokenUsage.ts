@@ -1,8 +1,8 @@
 import { collectDesignTokens, type NormalizedToken, type TokenGroup } from "./tokens";
 
-type UsageMatchType = "boundVariable" | "style" | "exactValue" | "none";
+export type UsageMatchType = "boundVariable" | "style" | "exactValue" | "none";
 
-type TokenUsageMatch = {
+export type TokenUsageMatch = {
   type: UsageMatchType;
   tokenPath?: string;
   tokenName?: string;
@@ -12,7 +12,7 @@ type TokenUsageMatch = {
   reason: string;
 };
 
-type TokenUsageEntry = {
+export type TokenUsageEntry = {
   nodeId: string;
   nodeName: string;
   nodeType: string;
@@ -22,14 +22,14 @@ type TokenUsageEntry = {
   match: TokenUsageMatch;
 };
 
-type TokenUsageWarning = {
+export type TokenUsageWarning = {
   code: "NODE_NOT_FOUND" | "UNSUPPORTED_ROOT_NODE" | "EMPTY_SCAN";
   message: string;
   nodeId?: string;
   nodeType?: string;
 };
 
-type TokenUsageResponse = {
+export type TokenUsageResponse = {
   version: 1;
   fileName: string;
   currentPage: { id: string; name: string };

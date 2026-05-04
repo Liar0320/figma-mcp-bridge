@@ -157,6 +157,18 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "audit_design_tokens",
+    "Audit design token coverage and consistency for the current selection, current page, or specific nodes. Returns read-only issues and recommendations based on token graph and usage mapping.",
+    toolInputSchemas.audit_design_tokens.shape,
+    async ({ nodeIds, minCoverage, includeUnusedTokens }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (minCoverage !== undefined) params.minCoverage = minCoverage;
+      if (includeUnusedTokens !== undefined) params.includeUnusedTokens = includeUnusedTokens;
+      return renderResponse(() => node.sendWithParams("audit_design_tokens", nodeIds, params));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
