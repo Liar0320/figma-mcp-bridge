@@ -183,6 +183,21 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "create_design_tokens",
+    "Create Figma design tokens from a reviewed token list. Defaults to dry-run preview; actual creation requires dryRun=false.",
+    toolInputSchemas.create_design_tokens.shape,
+    async ({ tokens, dryRun, collectionName, collectionStrategy, modeStrategy, conflictStrategy }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = { tokens };
+      if (dryRun !== undefined) params.dryRun = dryRun;
+      if (collectionName !== undefined) params.collectionName = collectionName;
+      if (collectionStrategy !== undefined) params.collectionStrategy = collectionStrategy;
+      if (modeStrategy !== undefined) params.modeStrategy = modeStrategy;
+      if (conflictStrategy !== undefined) params.conflictStrategy = conflictStrategy;
+      return renderResponse(() => node.sendWithParams("create_design_tokens", undefined, params));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,

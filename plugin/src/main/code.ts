@@ -1,5 +1,6 @@
 import { serializeNode } from "./serializer";
 import { collectDesignTokenAudit } from "./tokenAudit";
+import { createDesignTokens } from "./tokenCreate";
 import { collectDesignTokenProposals } from "./tokenPropose";
 import { collectDesignTokens, summarizeTokens } from "./tokens";
 import { collectTokenUsage } from "./tokenUsage";
@@ -17,6 +18,7 @@ type RequestType =
   | "get_token_usage"
   | "audit_design_tokens"
   | "propose_design_tokens"
+  | "create_design_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -52,6 +54,12 @@ type ServerRequest = {
     includeExactValueMatches?: boolean;
     includeDuplicateTokenValues?: boolean;
     maxProposals?: number;
+    tokens?: Array<Record<string, unknown>>;
+    dryRun?: boolean;
+    collectionName?: string;
+    collectionStrategy?: "upsert-by-name" | "create-new";
+    modeStrategy?: "use-default" | "create-missing";
+    conflictStrategy?: "error" | "skip";
   };
 };
 
@@ -353,6 +361,24 @@ const handleRequest = async (
             includeExactValueMatches: request.params?.includeExactValueMatches,
             includeDuplicateTokenValues: request.params?.includeDuplicateTokenValues,
             maxProposals: request.params?.maxProposals,
+          }),
+        };
+      }
+      case "create_design_tokens": {
+        const tokens = request.params?.tokens;
+        if (!Array.isArray(tokens)) {
+          throw new Error("params.tokens is required for create_design_tokens");
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await createDesignTokens({
+            tokens: tokens as never,
+            dryRun: request.params?.dryRun,
+            collectionName: request.params?.collectionName,
+            collectionStrategy: request.params?.collectionStrategy,
+            modeStrategy: request.params?.modeStrategy,
+            conflictStrategy: request.params?.conflictStrategy,
           }),
         };
       }
