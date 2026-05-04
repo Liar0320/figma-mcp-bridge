@@ -169,6 +169,20 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "propose_design_tokens",
+    "Propose new or consolidated design tokens from repeated unbound values and audit findings. Read-only; does not create variables or styles.",
+    toolInputSchemas.propose_design_tokens.shape,
+    async ({ nodeIds, minOccurrences, includeExactValueMatches, includeDuplicateTokenValues, maxProposals }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (minOccurrences !== undefined) params.minOccurrences = minOccurrences;
+      if (includeExactValueMatches !== undefined) params.includeExactValueMatches = includeExactValueMatches;
+      if (includeDuplicateTokenValues !== undefined) params.includeDuplicateTokenValues = includeDuplicateTokenValues;
+      if (maxProposals !== undefined) params.maxProposals = maxProposals;
+      return renderResponse(() => node.sendWithParams("propose_design_tokens", nodeIds, params));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
