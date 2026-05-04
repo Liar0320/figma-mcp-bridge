@@ -1,4 +1,5 @@
 import { serializeNode } from "./serializer";
+import { collectDesignTokenAudit } from "./tokenAudit";
 import { collectDesignTokens, summarizeTokens } from "./tokens";
 import { collectTokenUsage } from "./tokenUsage";
 import { handleWriteRequest, serializeWriteError } from "./write";
@@ -13,6 +14,7 @@ type RequestType =
   | "get_variable_defs"
   | "get_design_tokens"
   | "get_token_usage"
+  | "audit_design_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -42,6 +44,8 @@ type ServerRequest = {
     format?: "PNG" | "SVG" | "JPG" | "PDF";
     scale?: number;
     depth?: number;
+    minCoverage?: number;
+    includeUnusedTokens?: boolean;
   };
 };
 
@@ -62,6 +66,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_variable_defs",
   "get_design_tokens",
   "get_token_usage",
+  "audit_design_tokens",
   "get_screenshot",
 ]);
 
@@ -320,6 +325,16 @@ const handleRequest = async (
           type: request.type,
           requestId: request.requestId,
           data: await collectTokenUsage(request.nodeIds),
+        };
+      }
+      case "audit_design_tokens": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await collectDesignTokenAudit(request.nodeIds, {
+            minCoverage: request.params?.minCoverage,
+            includeUnusedTokens: request.params?.includeUnusedTokens,
+          }),
         };
       }
       case "get_screenshot": {

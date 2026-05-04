@@ -68,6 +68,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
 | `get_design_tokens` | Get normalized design tokens from local variables and styles with AI-friendly paths, sources, modes, and summary counts |
 | `get_token_usage` | Scan selection, current page, or specific nodes and map node properties to tokens via bindings, styles, or exact value matches |
+| `audit_design_tokens` | Read-only audit of token coverage and consistency; returns issues and recommendations based on token graph + usage mapping |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
 | `create_frame` | Create a frame on the current page |
@@ -102,8 +103,9 @@ Figma MCP Bridge exposes design-system data at two levels:
 - `get_variable_defs` returns raw Figma variable collections, modes, values, and aliases.
 - `get_design_tokens` returns a normalized token graph that combines local variables and styles while preserving their `source` (`variable` or `style`). Use this when an AI tool needs an overview of the file's design tokens without parsing raw Figma internals.
 - `get_token_usage` returns a usage map for the current selection, current page, or explicit `nodeIds`. It reports node property usages for colors, typography, radius, spacing, effects, and grids, then classifies matches as `boundVariable`, `style`, `exactValue`, or `none`.
+- `audit_design_tokens` combines the normalized token graph with usage mapping and returns a read-only audit report: `summary`, `issues[]`, `recommendations[]`, and source summaries. It flags low coverage, unbound usages, exact-value-only matches, duplicate token values, unknown groups, empty scans, and unused tokens in the scanned scope.
 
-`get_design_tokens` normalizes Figma names such as `Brand/Primary` into stable token paths such as `color.brand.primary`, includes mode-aware variable values, and summarizes token counts by source and group. `get_token_usage` builds on that graph to show design-system coverage in actual nodes, including summary counts by token group and match type. Both tools are read-only; token creation, token auditing, and token application are intentionally separate workflows.
+`get_design_tokens` normalizes Figma names such as `Brand/Primary` into stable token paths such as `color.brand.primary`, includes mode-aware variable values, and summarizes token counts by source and group. `get_token_usage` builds on that graph to show design-system coverage in actual nodes, including summary counts by token group and match type. `audit_design_tokens` is the next read-only layer for design-system governance: it does not create variables, bind nodes, rename layers, or otherwise modify the Figma file. Token proposal, creation, export, and application are intentionally separate workflows.
 
 ## Local development
 

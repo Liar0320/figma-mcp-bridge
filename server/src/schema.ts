@@ -118,6 +118,25 @@ export const toolInputSchemas = {
       ),
   }),
 
+  audit_design_tokens: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .optional()
+      .describe(
+        "Optional node IDs to audit. If omitted, audits current selection when non-empty, otherwise the current page."
+      ),
+    minCoverage: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe("Coverage threshold for LOW_COVERAGE audit issue. Default 0.8."),
+    includeUnusedTokens: z
+      .boolean()
+      .optional()
+      .describe("Whether to include UNUSED_TOKEN findings for tokens not referenced in the scanned scope. Default true."),
+  }),
+
   get_screenshot: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -256,6 +275,7 @@ const rpcToArgs: Record<
   get_node: (nodeIds) => ({ nodeId: nodeIds?.[0] }),
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
+  audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
