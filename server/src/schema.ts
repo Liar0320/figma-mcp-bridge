@@ -109,6 +109,15 @@ export const toolInputSchemas = {
       .describe("How many levels deep to traverse the node tree (default 2)"),
   }),
 
+  get_token_usage: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .optional()
+      .describe(
+        "Optional node IDs to scan. If omitted, scans current selection when non-empty, otherwise the current page."
+      ),
+  }),
+
   get_screenshot: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -246,6 +255,7 @@ const rpcToArgs: Record<
 > = {
   get_node: (nodeIds) => ({ nodeId: nodeIds?.[0] }),
   get_design_context: (_nodeIds, params) => ({ ...params }),
+  get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),

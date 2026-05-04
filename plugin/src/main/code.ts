@@ -1,5 +1,6 @@
 import { serializeNode } from "./serializer";
 import { collectDesignTokens, summarizeTokens } from "./tokens";
+import { collectTokenUsage } from "./tokenUsage";
 import { handleWriteRequest, serializeWriteError } from "./write";
 
 type RequestType =
@@ -11,6 +12,7 @@ type RequestType =
   | "get_design_context"
   | "get_variable_defs"
   | "get_design_tokens"
+  | "get_token_usage"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -59,6 +61,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_design_context",
   "get_variable_defs",
   "get_design_tokens",
+  "get_token_usage",
   "get_screenshot",
 ]);
 
@@ -310,6 +313,13 @@ const handleRequest = async (
             tokens,
             summary: summarizeTokens(tokens),
           },
+        };
+      }
+      case "get_token_usage": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await collectTokenUsage(request.nodeIds),
         };
       }
       case "get_screenshot": {
