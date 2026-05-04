@@ -15,6 +15,7 @@
     "src/main/tokenAudit.ts",
     "src/main/tokenPropose.ts",
     "src/main/tokenCreate.ts",
+    "src/main/tokenApply.ts",
     "src/main/tokens.ts"
   ]
 }

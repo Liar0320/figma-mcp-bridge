@@ -198,6 +198,19 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "apply_tokens",
+    "Apply existing Figma design tokens to matching node properties. Defaults to dry-run preview; actual binding/style application requires dryRun=false.",
+    toolInputSchemas.apply_tokens.shape,
+    async ({ nodeIds, tokenPaths, matchTypes, dryRun }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (tokenPaths !== undefined) params.tokenPaths = tokenPaths;
+      if (matchTypes !== undefined) params.matchTypes = matchTypes;
+      if (dryRun !== undefined) params.dryRun = dryRun;
+      return renderResponse(() => node.sendWithParams("apply_tokens", nodeIds, params));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
