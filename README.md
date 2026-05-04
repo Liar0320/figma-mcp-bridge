@@ -83,6 +83,8 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `set_layout_mode` | Set auto-layout mode |
 | `set_padding` | Set auto-layout padding |
 | `set_item_spacing` | Set auto-layout item spacing |
+| `set_node_name` | Rename an existing Figma node |
+| `rename_node` | Alias for `set_node_name` |
 | `delete_node` | Delete a node |
 | `batch_mutation` | Execute up to 100 write operations in order, with temporary refs for multi-step generation |
 

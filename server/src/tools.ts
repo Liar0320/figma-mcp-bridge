@@ -68,6 +68,8 @@ type WriteToolName = keyof Pick<
   | "set_layout_mode"
   | "set_padding"
   | "set_item_spacing"
+  | "set_node_name"
+  | "rename_node"
   | "delete_node"
 >;
 
@@ -255,6 +257,18 @@ export function registerTools(server: McpServer, node: Node): void {
     "Set auto-layout item spacing.",
     ({ nodeId, ...args }) =>
       node.sendWithParams("set_item_spacing", [String(nodeId)], args)
+  );
+  registerWriteTool(
+    "set_node_name",
+    "Rename an existing Figma node.",
+    ({ nodeId, ...args }) =>
+      node.sendWithParams("set_node_name", [String(nodeId)], args)
+  );
+  registerWriteTool(
+    "rename_node",
+    "Alias for set_node_name. Rename an existing Figma node.",
+    ({ nodeId, ...args }) =>
+      node.sendWithParams("rename_node", [String(nodeId)], args)
   );
   registerWriteTool("delete_node", "Delete a node.", ({ nodeId }) =>
     node.sendWithParams("delete_node", [String(nodeId)])

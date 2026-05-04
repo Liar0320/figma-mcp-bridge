@@ -24,6 +24,8 @@ type RequestType =
   | "set_layout_mode"
   | "set_padding"
   | "set_item_spacing"
+  | "set_node_name"
+  | "rename_node"
   | "find_nodes"
   | "delete_node"
   | "batch_mutation";
@@ -366,6 +368,8 @@ const handleRequest = async (
       case "set_layout_mode":
       case "set_padding":
       case "set_item_spacing":
+      case "set_node_name":
+      case "rename_node":
       case "find_nodes":
       case "delete_node":
       case "batch_mutation":

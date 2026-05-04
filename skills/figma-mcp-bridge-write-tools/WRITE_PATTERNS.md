@@ -19,6 +19,7 @@
 | 设置 auto-layout 方向 | `set_layout_mode` |
 | 设置 auto-layout 内边距 | `set_padding` |
 | 设置 auto-layout 间距 | `set_item_spacing` |
+| 重命名节点 | `set_node_name`（`rename_node` 是别名） |
 | 删除节点 | `delete_node` |
 | 批量有序执行多个操作 | `batch_mutation` |
 
