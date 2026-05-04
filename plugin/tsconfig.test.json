@@ -8,5 +8,5 @@
     "moduleResolution": "Bundler",
     "types": ["@figma/plugin-typings"]
   },
-  "include": ["src/main/write.ts", "src/main/serializer.ts"]
+  "include": ["src/main/write.ts", "src/main/serializer.ts", "src/main/tokenUsage.ts", "src/main/tokens.ts"]
 }

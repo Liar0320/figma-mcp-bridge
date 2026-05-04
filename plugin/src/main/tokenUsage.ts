@@ -22,6 +22,13 @@ type TokenUsageEntry = {
   match: TokenUsageMatch;
 };
 
+type TokenUsageWarning = {
+  code: "NODE_NOT_FOUND" | "UNSUPPORTED_ROOT_NODE" | "EMPTY_SCAN";
+  message: string;
+  nodeId?: string;
+  nodeType?: string;
+};
+
 type TokenUsageResponse = {
   version: 1;
   fileName: string;
@@ -37,10 +44,11 @@ type TokenUsageResponse = {
     totalUsages: number;
     matchedUsages: number;
     unmatchedUsages: number;
-    coverage: number;
+    coverage: number | null;
     byGroup: Partial<Record<TokenGroup, { total: number; matched: number; unmatched: number }>>;
     byMatchType: Record<UsageMatchType, number>;
   };
+  warnings?: TokenUsageWarning[];
 };
 
 type PaintUsageContext = "fills" | "strokes";
@@ -220,7 +228,7 @@ const addPaintUsages = (
       return;
     }
 
-    const serialized = serializeColorValue(paint.color as RGB | RGBA, paint.opacity as number | undefined);
+    const serialized = serializeColorValue(paint.color as unknown as RGB | RGBA, paint.opacity as number | undefined);
     const variableId = boundVariableId(paint, "color") ?? boundVariableId(node, context);
     const variableToken = variableId ? indexes.byFigmaId.get(variableId) : undefined;
     const exactToken = indexes.colorByValue.get(colorKey(serialized.color, serialized.opacity));
@@ -363,35 +371,64 @@ const collectSceneNodes = (roots: readonly SceneNode[]): SceneNode[] => {
 
 const resolveScopeRoots = async (
   nodeIds?: string[],
-): Promise<{ type: TokenUsageResponse["scope"]["type"]; roots: SceneNode[] }> => {
+): Promise<{ type: TokenUsageResponse["scope"]["type"]; roots: SceneNode[]; warnings: TokenUsageWarning[] }> => {
+  const warnings: TokenUsageWarning[] = [];
+
   if (nodeIds && nodeIds.length > 0) {
     const nodes = await Promise.all(nodeIds.map((id) => figma.getNodeByIdAsync(id)));
-    return {
-      type: "nodeIds",
-      roots: nodes.filter(
-        (node): node is SceneNode =>
-          node !== null && node.type !== "DOCUMENT" && node.type !== "PAGE" && "visible" in node,
-      ),
-    };
+    const roots: SceneNode[] = [];
+
+    nodes.forEach((node, index) => {
+      const nodeId = nodeIds[index];
+      if (!node) {
+        warnings.push({
+          code: "NODE_NOT_FOUND",
+          nodeId,
+          message: `Requested nodeId was not found: ${nodeId}`,
+        });
+        return;
+      }
+
+      if (node.type === "DOCUMENT" || node.type === "PAGE" || !("visible" in node)) {
+        warnings.push({
+          code: "UNSUPPORTED_ROOT_NODE",
+          nodeId,
+          nodeType: node.type,
+          message: `Requested nodeId ${nodeId} has unsupported root node type ${node.type}; pass scene node IDs or omit nodeIds to scan the current selection/page.`,
+        });
+        return;
+      }
+
+      roots.push(node);
+    });
+
+    return { type: "nodeIds", roots, warnings };
   }
 
   if (figma.currentPage.selection.length > 0) {
-    return { type: "selection", roots: [...figma.currentPage.selection] };
+    return { type: "selection", roots: [...figma.currentPage.selection], warnings };
   }
 
-  return { type: "currentPage", roots: [...figma.currentPage.children] };
+  return { type: "currentPage", roots: [...figma.currentPage.children], warnings };
 };
 
 export async function collectTokenUsage(nodeIds?: string[]): Promise<TokenUsageResponse> {
   const tokens = await collectDesignTokens();
   const indexes = buildIndexes(tokens);
-  const { type, roots } = await resolveScopeRoots(nodeIds);
+  const { type, roots, warnings } = await resolveScopeRoots(nodeIds);
   const nodes = collectSceneNodes(roots);
   const usages: TokenUsageEntry[] = [];
 
   for (const node of nodes) addNodeUsages(usages, node, indexes);
 
-  return {
+  if (nodes.length === 0) {
+    warnings.push({
+      code: "EMPTY_SCAN",
+      message: "No scannable nodes were found; token coverage is not applicable for an empty scan.",
+    });
+  }
+
+  const response: TokenUsageResponse = {
     version: 1,
     fileName: figma.root.name,
     currentPage: {
@@ -407,6 +444,9 @@ export async function collectTokenUsage(nodeIds?: string[]): Promise<TokenUsageR
     usages,
     summary: summarizeUsage(usages),
   };
+
+  if (warnings.length > 0) response.warnings = warnings;
+  return response;
 }
 
 export function summarizeUsage(usages: TokenUsageEntry[]): TokenUsageResponse["summary"] {
@@ -435,7 +475,7 @@ export function summarizeUsage(usages: TokenUsageEntry[]): TokenUsageResponse["s
     totalUsages,
     matchedUsages,
     unmatchedUsages,
-    coverage: totalUsages === 0 ? 1 : Number((matchedUsages / totalUsages).toFixed(4)),
+    coverage: totalUsages === 0 ? null : Number((matchedUsages / totalUsages).toFixed(4)),
     byGroup,
     byMatchType,
   };

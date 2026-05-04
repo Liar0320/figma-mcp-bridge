@@ -1,9 +1,19 @@
 import { readFile, writeFile } from "node:fs/promises";
 
-const filePath = new URL("../dist-test/src/main/write.js", import.meta.url);
-const source = await readFile(filePath, "utf8");
-const updated = source.replace('"./serializer"', '"./serializer.js"');
+const replacements = [
+  [new URL("../dist-test/src/main/write.js", import.meta.url), [['"./serializer"', '"./serializer.js"']]],
+  [new URL("../dist-test/src/main/tokenUsage.js", import.meta.url), [['"./tokens"', '"./tokens.js"']]],
+];
 
-if (updated !== source) {
-  await writeFile(filePath, updated);
+for (const [filePath, fileReplacements] of replacements) {
+  const source = await readFile(filePath, "utf8");
+  let updated = source;
+
+  for (const [find, replace] of fileReplacements) {
+    updated = updated.replace(find, replace);
+  }
+
+  if (updated !== source) {
+    await writeFile(filePath, updated);
+  }
 }
