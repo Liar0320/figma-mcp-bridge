@@ -153,6 +153,110 @@ function createMockFigma() {
   };
 }
 
+/** Asserts a write request rejects with the expected structured mutation error. */
+async function assertMutationError(promise, code, messagePattern) {
+  await assert.rejects(
+    promise,
+    (error) => {
+      assert.equal(error.mutationError?.code, code);
+      if (messagePattern) {
+        assert.match(error.mutationError?.message ?? "", messagePattern);
+      }
+      return true;
+    }
+  );
+}
+
+/** Verifies set_node_name renames an existing node and returns the updated snapshot. */
+async function testSetNodeNameRenamesExistingNode() {
+  globalThis.figma = createMockFigma();
+
+  const frame = await handleWriteRequest("create_frame", undefined, {
+    name: "Frame 6960",
+  });
+  const result = await handleWriteRequest("set_node_name", [frame.nodeId], {
+    name: "ServiceHighlight / Shipping",
+  });
+
+  assert.equal(result.nodeId, frame.nodeId);
+  assert.equal(result.name, "ServiceHighlight / Shipping");
+  assert.equal(result.node.name, "ServiceHighlight / Shipping");
+
+  const renamed = await globalThis.figma.getNodeByIdAsync(frame.nodeId);
+  assert.equal(renamed.name, "ServiceHighlight / Shipping");
+}
+
+/** Verifies the rename_node alias shares the same behavior as set_node_name. */
+async function testRenameNodeAliasRenamesExistingNode() {
+  globalThis.figma = createMockFigma();
+
+  const text = await handleWriteRequest("create_text", undefined, {
+    name: "Frame 6957",
+    characters: "Fast shipping",
+  });
+  const result = await handleWriteRequest("rename_node", [text.nodeId], {
+    name: "Content / Shipping",
+  });
+
+  assert.equal(result.nodeId, text.nodeId);
+  assert.equal(result.name, "Content / Shipping");
+}
+
+/** Verifies whitespace-only node names are rejected before mutation. */
+async function testSetNodeNameRejectsWhitespaceOnlyName() {
+  globalThis.figma = createMockFigma();
+
+  const frame = await handleWriteRequest("create_frame", undefined, {
+    name: "Original Name",
+  });
+
+  await assertMutationError(
+    handleWriteRequest("set_node_name", [frame.nodeId], { name: "   \t" }),
+    "INVALID_INPUT",
+    /name must not be empty or whitespace only/
+  );
+
+  const unchanged = await globalThis.figma.getNodeByIdAsync(frame.nodeId);
+  assert.equal(unchanged.name, "Original Name");
+}
+
+/** Verifies missing node IDs report a clear NOT_FOUND error for rename requests. */
+async function testSetNodeNameMissingNodeReportsNotFound() {
+  globalThis.figma = createMockFigma();
+
+  await assertMutationError(
+    handleWriteRequest("set_node_name", ["1:404"], { name: "Missing" }),
+    "NOT_FOUND",
+    /nodeId was not found/
+  );
+}
+
+/** Verifies batch_mutation supports renaming nodes via tmp: references. */
+async function testBatchSetNodeNameSupportsTmpRef() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    operations: [
+      {
+        type: "create_frame",
+        ref: "tmp:shipping",
+        params: { name: "Frame 6960" },
+      },
+      {
+        type: "set_node_name",
+        nodeId: "tmp:shipping",
+        params: { name: "ServiceHighlight / Shipping" },
+      },
+    ],
+  });
+
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.results[1].name, "ServiceHighlight / Shipping");
+
+  const renamed = await globalThis.figma.getNodeByIdAsync(result.createdRefs["tmp:shipping"]);
+  assert.equal(renamed.name, "ServiceHighlight / Shipping");
+}
+
 /** Verifies ordered batch execution and reference creation across many steps. */
 async function testLargeOrderedBatch() {
   globalThis.figma = createMockFigma();
@@ -434,6 +538,11 @@ async function testBatchSetStrokesSupportsTmpRef() {
 /** Runs the write-tool test cases and reports a simple pass/fail summary. */
 async function runTests() {
   const tests = [
+    ["testSetNodeNameRenamesExistingNode", testSetNodeNameRenamesExistingNode],
+    ["testRenameNodeAliasRenamesExistingNode", testRenameNodeAliasRenamesExistingNode],
+    ["testSetNodeNameRejectsWhitespaceOnlyName", testSetNodeNameRejectsWhitespaceOnlyName],
+    ["testSetNodeNameMissingNodeReportsNotFound", testSetNodeNameMissingNodeReportsNotFound],
+    ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
     ["testPartialFailure", testPartialFailure],
     ["testBatchValidationFailure", testBatchValidationFailure],

@@ -115,6 +115,15 @@ function getOptionalNonEmptyString(value: unknown, field: string): string | unde
   return getString(value, field);
 }
 
+/** Reads a required node name and rejects empty or whitespace-only labels. */
+function getNodeName(value: unknown, field = "name"): string {
+  const name = getString(value, field);
+  if (name.trim().length === 0) {
+    fail("INVALID_INPUT", `${field} must not be empty or whitespace only`);
+  }
+  return name;
+}
+
 /** Validates an enum string field against the allowed literals. */
 function validateEnum(value: unknown, field: string, allowed: readonly string[]): void {
   const literal = getString(value, field);
@@ -305,6 +314,11 @@ function validateWriteToolParams(
     case "set_item_spacing":
       getFigmaNodeId(merged.nodeId, "nodeId");
       getNumber(merged.itemSpacing, "itemSpacing");
+      return;
+    case "set_node_name":
+    case "rename_node":
+      getFigmaNodeId(merged.nodeId, "nodeId");
+      getNodeName(merged.name);
       return;
     case "find_nodes":
       getOptionalNonEmptyString(params?.query, "query");
@@ -789,6 +803,11 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return mutateNode(merged, (node) => applyPadding(node, merged.padding ?? merged));
     case "set_item_spacing":
       return mutateNode(merged, (node) => applyItemSpacing(node, merged.itemSpacing));
+    case "set_node_name":
+    case "rename_node":
+      return mutateNode(merged, (node) => {
+        node.name = getNodeName(merged.name);
+      });
     case "find_nodes":
       return findNodes(params);
     case "delete_node":
@@ -839,6 +858,7 @@ export async function handleWriteRequest(
   params: RequestParams
 ): Promise<unknown> {
   if (type !== "batch_mutation") {
+    validateWriteToolParams(type, nodeIds, params);
     return executeWrite(type, nodeIds, params);
   }
 

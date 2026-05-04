@@ -64,6 +64,10 @@ const paddingSchema = z.object({
   left: z.number().nonnegative().optional(),
 });
 
+const nodeName = z
+  .string()
+  .refine((value) => value.trim().length > 0, "Name must not be empty or whitespace only");
+
 export const batchOperationType = z.enum([
   "create_frame",
   "create_text",
@@ -79,6 +83,8 @@ export const batchOperationType = z.enum([
   "set_layout_mode",
   "set_padding",
   "set_item_spacing",
+  "set_node_name",
+  "rename_node",
   "find_nodes",
   "delete_node",
 ]);
@@ -205,6 +211,14 @@ export const toolInputSchemas = {
     nodeId: figmaNodeId,
     itemSpacing: z.number(),
   }),
+  set_node_name: z.object({
+    nodeId: figmaNodeId,
+    name: nodeName,
+  }),
+  rename_node: z.object({
+    nodeId: figmaNodeId,
+    name: nodeName,
+  }),
   find_nodes: z.object({
     nodeId: figmaNodeId.optional(),
     name: z.string().min(1).optional(),
@@ -248,6 +262,8 @@ const rpcToArgs: Record<
   set_layout_mode: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_padding: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_item_spacing: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_node_name: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  rename_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   find_nodes: (_nodeIds, params) => ({ ...params }),
   delete_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   batch_mutation: (_nodeIds, params) => ({ ...params }),
