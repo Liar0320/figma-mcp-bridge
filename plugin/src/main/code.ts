@@ -1,4 +1,5 @@
 import { serializeNode } from "./serializer";
+import { collectDesignTokens, summarizeTokens } from "./tokens";
 import { handleWriteRequest, serializeWriteError } from "./write";
 
 type RequestType =
@@ -9,6 +10,7 @@ type RequestType =
   | "get_metadata"
   | "get_design_context"
   | "get_variable_defs"
+  | "get_design_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -54,6 +56,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_metadata",
   "get_design_context",
   "get_variable_defs",
+  "get_design_tokens",
   "get_screenshot",
 ]);
 
@@ -287,6 +290,23 @@ const handleRequest = async (
           requestId: request.requestId,
           data: {
             collections: variableData,
+          },
+        };
+      }
+      case "get_design_tokens": {
+        const tokens = await collectDesignTokens();
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            version: 1,
+            fileName: figma.root.name,
+            currentPage: {
+              id: figma.currentPage.id,
+              name: figma.currentPage.name,
+            },
+            tokens,
+            summary: summarizeTokens(tokens),
           },
         };
       }

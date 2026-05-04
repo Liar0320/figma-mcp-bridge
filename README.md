@@ -66,6 +66,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `get_metadata` | Get file name, pages, and current page info |
 | `get_design_context` | Get a depth-limited tree optimized for understanding design context |
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
+| `get_design_tokens` | Get normalized design tokens from local variables and styles with AI-friendly paths, sources, modes, and summary counts |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
 | `create_frame` | Create a frame on the current page |
@@ -89,6 +90,16 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate.
 
 Within `batch_mutation`, temporary references must use the `tmp:` prefix, for example `ref: "tmp:modal"` and `nodeId: "tmp:modal"`. Bare labels like `"modal"` are treated as literal node IDs and are not resolved as batch refs.
+
+## Design Tokens
+
+Figma MCP Bridge exposes design-system data at two levels:
+
+- `get_styles` returns raw local paint, text, effect, and grid styles.
+- `get_variable_defs` returns raw Figma variable collections, modes, values, and aliases.
+- `get_design_tokens` returns a normalized token graph that combines local variables and styles while preserving their `source` (`variable` or `style`). Use this when an AI tool needs an overview of the file's design tokens without parsing raw Figma internals.
+
+`get_design_tokens` normalizes Figma names such as `Brand/Primary` into stable token paths such as `color.brand.primary`, includes mode-aware variable values, and summarizes token counts by source and group. It is read-only; token creation, usage auditing, and token application are intentionally separate workflows.
 
 ## Local development
 
