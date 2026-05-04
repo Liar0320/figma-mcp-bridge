@@ -148,6 +148,15 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "get_token_usage",
+    "Scan the current selection, current page, or specific nodes for design token usage. Maps node properties to local variables/styles and exact token value matches.",
+    toolInputSchemas.get_token_usage.shape,
+    async ({ nodeIds }): Promise<ToolResult> => {
+      return renderResponse(() => node.sendWithParams("get_token_usage", nodeIds));
+    }
+  );
+
+  server.tool(
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
