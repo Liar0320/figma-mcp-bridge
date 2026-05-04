@@ -15,6 +15,8 @@ export type StyleTokenType = "paint" | "text" | "effect" | "grid";
 
 export type NormalizedToken = {
   path: string;
+  /** Human-readable source path preserving the original Figma token name. */
+  originalPath: string;
   name: string;
   group: TokenGroup;
   source: TokenSource;
@@ -68,8 +70,9 @@ const serializeColor = (color: RGB | RGBA): { type: "COLOR"; color: string; opac
 export function normalizeTokenSegment(segment: string): string {
   return segment
     .trim()
+    .normalize("NFKC")
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase();
 }
@@ -80,6 +83,51 @@ export function normalizeTokenPath(group: TokenGroup, figmaName: string): string
     .map(normalizeTokenSegment)
     .filter(Boolean);
   return [group, ...parts].join(".");
+}
+
+function hashTokenIdentity(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function tokenDisambiguator(token: NormalizedToken, index: number): string {
+  const identity = token.figmaId ?? `${token.source}:${token.group}:${token.name}:${index}`;
+  const suffix = normalizeTokenSegment(identity.split(/[:/]/).filter(Boolean).pop() ?? identity);
+  return suffix || hashTokenIdentity(identity);
+}
+
+export function disambiguateTokenPaths(tokens: NormalizedToken[]): NormalizedToken[] {
+  const pathCounts = new Map<string, number>();
+  for (const token of tokens) {
+    pathCounts.set(token.path, (pathCounts.get(token.path) ?? 0) + 1);
+  }
+
+  const usedPaths = new Set<string>();
+  return tokens.map((token, index) => {
+    const hasCollision = (pathCounts.get(token.path) ?? 0) > 1;
+    const basePath = hasCollision
+      ? `${token.path}.${tokenDisambiguator(token, index)}`
+      : token.path;
+
+    let path = basePath;
+    let attempt = 1;
+    while (usedPaths.has(path)) {
+      path = `${basePath}.${hashTokenIdentity(`${token.source}:${token.group}:${token.name}:${index}:${attempt}`)}`;
+      attempt += 1;
+    }
+    usedPaths.add(path);
+
+    return path === token.path
+      ? token
+      : {
+          ...token,
+          path,
+        };
+  });
 }
 
 function groupFromVariable(variable: Variable): TokenGroup {
@@ -151,6 +199,7 @@ export async function collectVariableTokens(): Promise<NormalizedToken[]> {
 
       tokens.push({
         path: normalizeTokenPath(group, variable.name),
+        originalPath: variable.name,
         name: variable.name,
         group,
         source: "variable",
@@ -209,6 +258,7 @@ export async function collectStyleTokens(): Promise<NormalizedToken[]> {
   return [
     ...paintStyles.map((style): NormalizedToken => ({
       path: normalizeTokenPath("color", style.name),
+      originalPath: style.name,
       name: style.name,
       group: "color",
       source: "style",
@@ -219,6 +269,7 @@ export async function collectStyleTokens(): Promise<NormalizedToken[]> {
     })),
     ...textStyles.map((style): NormalizedToken => ({
       path: normalizeTokenPath("typography", style.name),
+      originalPath: style.name,
       name: style.name,
       group: "typography",
       source: "style",
@@ -229,6 +280,7 @@ export async function collectStyleTokens(): Promise<NormalizedToken[]> {
     })),
     ...effectStyles.map((style): NormalizedToken => ({
       path: normalizeTokenPath("effect", style.name),
+      originalPath: style.name,
       name: style.name,
       group: "effect",
       source: "style",
@@ -239,6 +291,7 @@ export async function collectStyleTokens(): Promise<NormalizedToken[]> {
     })),
     ...gridStyles.map((style): NormalizedToken => ({
       path: normalizeTokenPath("grid", style.name),
+      originalPath: style.name,
       name: style.name,
       group: "grid",
       source: "style",
@@ -275,5 +328,5 @@ export async function collectDesignTokens(): Promise<NormalizedToken[]> {
     collectVariableTokens(),
     collectStyleTokens(),
   ]);
-  return [...variableTokens, ...styleTokens];
+  return disambiguateTokenPaths([...variableTokens, ...styleTokens]);
 }
