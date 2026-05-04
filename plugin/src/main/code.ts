@@ -1,4 +1,5 @@
 import { serializeNode } from "./serializer";
+import { applyTokens } from "./tokenApply";
 import { collectDesignTokenAudit } from "./tokenAudit";
 import { createDesignTokens } from "./tokenCreate";
 import { collectDesignTokenProposals } from "./tokenPropose";
@@ -19,6 +20,7 @@ type RequestType =
   | "audit_design_tokens"
   | "propose_design_tokens"
   | "create_design_tokens"
+  | "apply_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -60,6 +62,8 @@ type ServerRequest = {
     collectionStrategy?: "upsert-by-name" | "create-new";
     modeStrategy?: "use-default" | "create-missing";
     conflictStrategy?: "error" | "skip";
+    tokenPaths?: string[];
+    matchTypes?: Array<"exactValue" | "style" | "boundVariable">;
   };
 };
 
@@ -379,6 +383,18 @@ const handleRequest = async (
             collectionStrategy: request.params?.collectionStrategy,
             modeStrategy: request.params?.modeStrategy,
             conflictStrategy: request.params?.conflictStrategy,
+          }),
+        };
+      }
+      case "apply_tokens": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await applyTokens({
+            nodeIds: request.nodeIds,
+            tokenPaths: request.params?.tokenPaths,
+            matchTypes: request.params?.matchTypes,
+            dryRun: request.params?.dryRun,
           }),
         };
       }

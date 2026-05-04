@@ -24,6 +24,13 @@ const replacements = [
       ['"./tokens"', '"./tokens.js"'],
     ],
   ],
+  [
+    new URL("../dist-test/src/main/tokenApply.js", import.meta.url),
+    [
+      ['"./tokens"', '"./tokens.js"'],
+      ['"./tokenUsage"', '"./tokenUsage.js"'],
+    ],
+  ],
 ];
 
 for (const [filePath, fileReplacements] of replacements) {

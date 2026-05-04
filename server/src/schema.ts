@@ -68,6 +68,7 @@ const tokenGroup = z.enum(["color", "typography", "effect", "grid", "spacing", "
 const tokenSource = z.enum(["variable", "style"]);
 const variableType = z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]);
 const styleType = z.enum(["paint", "text", "effect", "grid"]);
+const applyTokenMatchType = z.enum(["exactValue", "style", "boundVariable"]);
 const designTokenInput = z.object({
   name: z.string().min(1),
   group: tokenGroup,
@@ -212,6 +213,27 @@ export const toolInputSchemas = {
       .describe("What to do if a token path/value already exists. Default error."),
   }),
 
+  apply_tokens: z.object({
+    nodeIds: z
+      .array(figmaNodeId)
+      .optional()
+      .describe(
+        "Optional node IDs to update. If omitted, scans current selection when non-empty, otherwise the current page."
+      ),
+    tokenPaths: z
+      .array(z.string().min(1))
+      .optional()
+      .describe("Optional token paths to apply. If omitted, all exact-value matches are considered."),
+    matchTypes: z
+      .array(applyTokenMatchType)
+      .optional()
+      .describe("Usage match types to consider. Default exactValue; style and boundVariable matches are skipped as already applied."),
+    dryRun: z
+      .boolean()
+      .optional()
+      .describe("Preview apply plan only by default. Set explicitly to false to bind variables/apply styles in Figma."),
+  }),
+
   get_screenshot: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -353,6 +375,7 @@ const rpcToArgs: Record<
   audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   propose_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   create_design_tokens: (_nodeIds, params) => ({ ...params }),
+  apply_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
