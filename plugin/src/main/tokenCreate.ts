@@ -191,7 +191,80 @@ export function variableNameForCreatedToken(group: TokenGroup, name: string, var
   return firstSegment === group ? name : `${group}/${name}`;
 }
 
-const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
+const toFontName = (value: unknown): FontName => {
+  if (!isObject(value)) {
+    throw new Error("Text style value must be an object");
+  }
+
+  if (isObject(value.fontName)) {
+    const family = value.fontName.family;
+    const style = value.fontName.style;
+    if (typeof family === "string" && family.trim() && typeof style === "string" && style.trim()) {
+      return { family, style };
+    }
+  }
+
+  if (typeof value.fontFamily === "string" && value.fontFamily.trim() && typeof value.fontStyle === "string" && value.fontStyle.trim()) {
+    return { family: value.fontFamily, style: value.fontStyle };
+  }
+
+  throw new Error("Text style value must include fontName or fontFamily/fontStyle");
+};
+
+const toLineHeight = (value: unknown): LineHeight | undefined => {
+  if (value === undefined) return undefined;
+  if (!isObject(value) || typeof value.unit !== "string") {
+    throw new Error("Text style lineHeight must be an object with unit");
+  }
+  if (value.unit === "AUTO") return { unit: "AUTO" };
+  if (value.unit !== "PIXELS" && value.unit !== "PERCENT") {
+    throw new Error("Text style lineHeight.unit must be PIXELS, PERCENT, or AUTO");
+  }
+  if (typeof value.value !== "number" || value.value < 0) {
+    throw new Error("Text style lineHeight.value must be a nonnegative number");
+  }
+  return { unit: value.unit, value: value.value };
+};
+
+const toLetterSpacing = (value: unknown): LetterSpacing | undefined => {
+  if (value === undefined) return undefined;
+  if (!isObject(value) || typeof value.unit !== "string") {
+    throw new Error("Text style letterSpacing must be an object with unit");
+  }
+  if (value.unit !== "PIXELS" && value.unit !== "PERCENT") {
+    throw new Error("Text style letterSpacing.unit must be PIXELS or PERCENT");
+  }
+  if (typeof value.value !== "number") {
+    throw new Error("Text style letterSpacing.value must be a number");
+  }
+  return { unit: value.unit, value: value.value };
+};
+
+const validateTextStyleValue = (value: unknown): void => {
+  if (!isObject(value)) throw new Error("Text style value must be an object");
+  toFontName(value);
+  if (typeof value.fontSize !== "number" || value.fontSize <= 0) {
+    throw new Error("Text style value must include a positive fontSize");
+  }
+  toLineHeight(value.lineHeight);
+  toLetterSpacing(value.letterSpacing);
+};
+
+const applyOptionalTextStyleFields = (style: TextStyle, value: Record<string, unknown>): void => {
+  if (typeof value.fontSize === "number") style.fontSize = value.fontSize;
+  if (typeof value.textDecoration === "string") style.textDecoration = value.textDecoration as TextDecoration;
+  if (typeof value.textCase === "string") style.textCase = value.textCase as TextCase;
+  if (typeof value.paragraphIndent === "number") style.paragraphIndent = value.paragraphIndent;
+  if (typeof value.paragraphSpacing === "number") style.paragraphSpacing = value.paragraphSpacing;
+
+  const lineHeight = toLineHeight(value.lineHeight);
+  if (lineHeight) style.lineHeight = lineHeight;
+
+  const letterSpacing = toLetterSpacing(value.letterSpacing);
+  if (letterSpacing) style.letterSpacing = letterSpacing;
+};
+
+const createStyle = async (item: CreateDesignTokenPlanItem): Promise<BaseStyle> => {
   if (item.styleType === "paint") {
     const style = figma.createPaintStyle();
     style.name = item.name;
@@ -199,9 +272,16 @@ const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
     return style;
   }
   if (item.styleType === "text") {
+    if (!isObject(item.value)) throw new Error("Text style value must be an object");
+    const fontName = toFontName(item.value);
+    if (typeof item.value.fontSize !== "number" || item.value.fontSize <= 0) {
+      throw new Error("Text style value must include a positive fontSize");
+    }
+    await figma.loadFontAsync(fontName);
     const style = figma.createTextStyle();
     style.name = item.name;
-    if (isObject(item.value) && typeof item.value.fontSize === "number") style.fontSize = item.value.fontSize;
+    style.fontName = fontName;
+    applyOptionalTextStyleFields(style, item.value);
     return style;
   }
   if (item.styleType === "effect") {
@@ -217,6 +297,7 @@ const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
 };
 
 export const toVariableValueForTest = toVariableValue;
+export const createStyleForTest = createStyle;
 
 export function planCreateDesignTokens(
   options: CreateDesignTokensOptions,
@@ -286,6 +367,25 @@ export function planCreateDesignTokens(
         valuesByMode: token.valuesByMode,
         message: "Unable to infer styleType; provide paint, text, effect, or grid",
       };
+    }
+
+    if (source === "style" && styleType === "text") {
+      try {
+        validateTextStyleValue(token.value);
+      } catch (error) {
+        return {
+          name: token.name,
+          path,
+          group: token.group,
+          source,
+          action: "error",
+          status: "error",
+          value: token.value,
+          valuesByMode: token.valuesByMode,
+          styleType,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     return {
@@ -365,7 +465,7 @@ export async function createDesignTokens(options: CreateDesignTokensOptions): Pr
           item.status = "created";
           item.figmaId = variable.id;
         } else if (item.action === "create-style") {
-          const style = createStyle(item);
+          const style = await createStyle(item);
           item.status = "created";
           item.figmaId = style.id;
         }
