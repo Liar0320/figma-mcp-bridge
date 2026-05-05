@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { summarizeUsage } from "../dist-test/src/main/tokenUsage.js";
+import { collectTokenUsage, summarizeUsage } from "../dist-test/src/main/tokenUsage.js";
 
 function testEmptyUsageCoverageIsNull() {
   const summary = summarizeUsage([]);
@@ -39,10 +39,66 @@ function testNonEmptyUsageCoverageIsRatio() {
   assert.equal(summary.coverage, 0.5);
 }
 
+async function testUniformCornerRadiusBindingsReadBackAsBoundVariable() {
+  const node = {
+    id: "1:3",
+    name: "Card",
+    type: "RECTANGLE",
+    visible: true,
+    cornerRadius: 16,
+    boundVariables: {
+      topLeftRadius: { id: "VariableID:1:3" },
+      topRightRadius: { id: "VariableID:1:3" },
+      bottomRightRadius: { id: "VariableID:1:3" },
+      bottomLeftRadius: { id: "VariableID:1:3" },
+    },
+  };
+  globalThis.figma = {
+    root: { name: "Usage Test" },
+    currentPage: {
+      id: "0:1",
+      name: "Page 1",
+      selection: [node],
+      children: [node],
+    },
+    variables: {
+      async getLocalVariableCollectionsAsync() {
+        return [{
+          id: "CollectionID:1:1",
+          name: "Tokens",
+          defaultModeId: "mode:1",
+          modes: [{ modeId: "mode:1", name: "Default" }],
+          variableIds: ["VariableID:1:3"],
+        }];
+      },
+      async getVariableByIdAsync(id) {
+        return {
+          id,
+          name: "radius/md",
+          resolvedType: "FLOAT",
+          valuesByMode: { "mode:1": 16 },
+          description: "",
+        };
+      },
+    },
+    async getLocalPaintStylesAsync() { return []; },
+    async getLocalTextStylesAsync() { return []; },
+    async getLocalEffectStylesAsync() { return []; },
+    async getLocalGridStylesAsync() { return []; },
+  };
+
+  const response = await collectTokenUsage();
+  const radiusUsage = response.usages.find((usage) => usage.property === "cornerRadius");
+
+  assert.equal(radiusUsage?.match.type, "boundVariable");
+  assert.equal(radiusUsage?.match.tokenFigmaId, "VariableID:1:3");
+}
+
 async function runTests() {
   const tests = [
     ["testEmptyUsageCoverageIsNull", testEmptyUsageCoverageIsNull],
     ["testNonEmptyUsageCoverageIsRatio", testNonEmptyUsageCoverageIsRatio],
+    ["testUniformCornerRadiusBindingsReadBackAsBoundVariable", testUniformCornerRadiusBindingsReadBackAsBoundVariable],
   ];
   const failures = [];
   let passed = 0;

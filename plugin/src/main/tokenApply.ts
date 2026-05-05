@@ -8,6 +8,13 @@ export type ApplyTokensOptions = {
   tokenPaths?: string[];
   matchTypes?: ApplyTokenMatchType[];
   dryRun?: boolean;
+  failureMode?: "best-effort" | "atomic" | "grouped";
+};
+
+export type ApplyTokenWarning = {
+  code: "DYNAMIC_PAGE_TEXT_STYLE_ASYNC_REQUIRED" | "PARTIAL_SUCCESS" | "ATOMIC_MODE_NOT_FULLY_TRANSACTIONAL";
+  message: string;
+  group?: TokenGroup;
 };
 
 export type ApplyTokenPlanItem = {
@@ -48,7 +55,13 @@ export type ApplyTokensResponse = {
     applied: number;
     skipped: number;
     errors: number;
+    partialSuccess: boolean;
+    plannedGroups: TokenGroup[];
+    appliedGroups: TokenGroup[];
+    failedGroups: TokenGroup[];
   };
+  failureMode: "best-effort" | "atomic" | "grouped";
+  warnings?: ApplyTokenWarning[];
   results: ApplyTokenPlanItem[];
 };
 
@@ -59,24 +72,59 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 const buildResponse = (
   dryRun: boolean,
+  failureMode: ApplyTokensResponse["failureMode"],
   context: ApplyTokensContext,
   scope: ApplyTokensResponse["scope"],
   results: ApplyTokenPlanItem[],
-): ApplyTokensResponse => ({
-  version: 1,
-  dryRun,
-  fileName: context.fileName,
-  currentPage: context.currentPage,
-  scope,
-  summary: {
-    consideredUsages: results.length,
-    planned: results.filter((item) => item.status === "planned").length,
-    applied: results.filter((item) => item.status === "applied").length,
-    skipped: results.filter((item) => item.status === "skipped").length,
-    errors: results.filter((item) => item.status === "error").length,
-  },
-  results,
-});
+): ApplyTokensResponse => {
+  const plannedGroups = [...new Set(results.filter((item) => item.status === "planned").map((item) => item.group))];
+  const appliedGroups = [...new Set(results.filter((item) => item.status === "applied").map((item) => item.group))];
+  const failedGroups = [...new Set(results.filter((item) => item.status === "error").map((item) => item.group))];
+  const partialSuccess = appliedGroups.length > 0 && failedGroups.length > 0;
+  const warnings: ApplyTokenWarning[] = [];
+
+  if (results.some((item) => item.action === "apply-style" && item.property === "typography")) {
+    warnings.push({
+      code: "DYNAMIC_PAGE_TEXT_STYLE_ASYNC_REQUIRED",
+      group: "typography",
+      message: "Text style application requires node.setTextStyleIdAsync in dynamic-page mode; the mutation executor uses the async path when available.",
+    });
+  }
+  if (partialSuccess) {
+    warnings.push({
+      code: "PARTIAL_SUCCESS",
+      message: `apply_tokens partially succeeded; applied groups: ${appliedGroups.join(", ")}; failed groups: ${failedGroups.join(", ")}.`,
+    });
+  }
+  if (failureMode === "atomic" && !dryRun) {
+    warnings.push({
+      code: "ATOMIC_MODE_NOT_FULLY_TRANSACTIONAL",
+      message: "Figma plugin mutations cannot be fully rolled back; atomic mode stops after the first failure and marks remaining planned operations as skipped.",
+    });
+  }
+
+  return {
+    version: 1,
+    dryRun,
+    fileName: context.fileName,
+    currentPage: context.currentPage,
+    scope,
+    summary: {
+      consideredUsages: results.length,
+      planned: results.filter((item) => item.status === "planned").length,
+      applied: results.filter((item) => item.status === "applied").length,
+      skipped: results.filter((item) => item.status === "skipped").length,
+      errors: results.filter((item) => item.status === "error").length,
+      partialSuccess,
+      plannedGroups,
+      appliedGroups,
+      failedGroups,
+    },
+    failureMode,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    results,
+  };
+};
 
 const styleActionForGroup = (group: TokenGroup): boolean => ["color", "typography", "effect", "grid"].includes(group);
 
@@ -97,6 +145,7 @@ export function planApplyTokens(
   scope: ApplyTokensResponse["scope"],
 ): ApplyTokensResponse {
   const dryRun = options.dryRun !== false;
+  const failureMode = options.failureMode ?? "best-effort";
   const allowedMatchTypes = new Set(options.matchTypes ?? DEFAULT_MATCH_TYPES);
   const allowedTokenPaths = options.tokenPaths ? new Set(options.tokenPaths) : undefined;
   const tokensByPath = new Map(tokens.map((token) => [token.path, token]));
@@ -142,7 +191,7 @@ export function planApplyTokens(
     }
   }
 
-  return buildResponse(dryRun, context, scope, results);
+  return buildResponse(dryRun, failureMode, context, scope, results);
 }
 
 const getVariableById = async (id: string): Promise<Variable> => {
@@ -164,10 +213,62 @@ const paintIndexFromProperty = (property: string, field: "fills" | "strokes"): n
 
 const clonePaints = (value: unknown): Paint[] => Array.isArray(value) ? [...(value as Paint[])] : [];
 
+const VARIABLE_BINDABLE_NODE_FIELDS: Record<string, string[]> = {
+  cornerRadius: ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"],
+  topLeftRadius: ["topLeftRadius"],
+  topRightRadius: ["topRightRadius"],
+  bottomRightRadius: ["bottomRightRadius"],
+  bottomLeftRadius: ["bottomLeftRadius"],
+  itemSpacing: ["itemSpacing"],
+  paddingTop: ["paddingTop"],
+  paddingRight: ["paddingRight"],
+  paddingBottom: ["paddingBottom"],
+  paddingLeft: ["paddingLeft"],
+  width: ["width"],
+  height: ["height"],
+  minWidth: ["minWidth"],
+  maxWidth: ["maxWidth"],
+  minHeight: ["minHeight"],
+  maxHeight: ["maxHeight"],
+  opacity: ["opacity"],
+  strokeWeight: ["strokeWeight"],
+  strokeTopWeight: ["strokeTopWeight"],
+  strokeRightWeight: ["strokeRightWeight"],
+  strokeBottomWeight: ["strokeBottomWeight"],
+  strokeLeftWeight: ["strokeLeftWeight"],
+};
+
+type BindableSceneNode = SceneNode & {
+  boundVariables?: Record<string, { id?: string } | Array<{ id?: string }>>;
+  setBoundVariable?: (field: string, variable: Variable | null) => void;
+};
+
+const firstBoundVariableId = (binding: unknown): string | undefined => {
+  if (isObject(binding) && typeof binding.id === "string") return binding.id;
+  if (Array.isArray(binding)) {
+    const first = binding.find((item) => isObject(item) && typeof item.id === "string");
+    if (isObject(first)) return first.id as string;
+  }
+  return undefined;
+};
+
+const boundVariableIdForField = (node: BindableSceneNode, field: string): string | undefined => (
+  firstBoundVariableId(node.boundVariables?.[field])
+);
+
+const assertNodeVariableBinding = (node: BindableSceneNode, fields: string[], variableId: string, sourceProperty: string): void => {
+  const missing = fields.filter((field) => boundVariableIdForField(node, field) !== variableId);
+  if (missing.length > 0) {
+    throw new Error(
+      `Variable binding verification failed for ${sourceProperty}; expected ${variableId} on ${missing.join(", ")}`,
+    );
+  }
+};
+
 async function applyVariableToNode(node: SceneNode, item: ApplyTokenPlanItem): Promise<void> {
   if (!item.tokenFigmaId) throw new Error("tokenFigmaId is required");
   const variable = await getVariableById(item.tokenFigmaId);
-  const asBindable = node as SceneNode & { setBoundVariable?: (field: string, variable: Variable) => void };
+  const asBindable = node as BindableSceneNode;
 
   const fillIndex = paintIndexFromProperty(item.property, "fills");
   if (fillIndex !== undefined) {
@@ -189,12 +290,14 @@ async function applyVariableToNode(node: SceneNode, item: ApplyTokenPlanItem): P
     return;
   }
 
-  if (typeof asBindable.setBoundVariable === "function") {
-    asBindable.setBoundVariable(item.property, variable);
-    return;
+  const fields = VARIABLE_BINDABLE_NODE_FIELDS[item.property];
+  if (!fields) throw new Error(`Unsupported variable binding target ${item.property}`);
+  if (typeof asBindable.setBoundVariable !== "function") {
+    throw new Error(`Node does not support variable binding for ${item.property}`);
   }
 
-  throw new Error(`Node does not support variable binding for ${item.property}`);
+  for (const field of fields) asBindable.setBoundVariable(field, variable);
+  assertNodeVariableBinding(asBindable, fields, variable.id, item.property);
 }
 
 async function applyStyleToNode(node: SceneNode, item: ApplyTokenPlanItem): Promise<void> {
@@ -210,7 +313,12 @@ async function applyStyleToNode(node: SceneNode, item: ApplyTokenPlanItem): Prom
   }
   if (item.property === "typography") {
     if (node.type !== "TEXT") throw new Error("typography style can only be applied to TEXT nodes");
-    (node as TextNode).textStyleId = item.tokenFigmaId;
+    const textNode = node as TextNode & { setTextStyleIdAsync?: (styleId: string) => Promise<void> };
+    if (typeof textNode.setTextStyleIdAsync === "function") {
+      await textNode.setTextStyleIdAsync(item.tokenFigmaId);
+    } else {
+      textNode.textStyleId = item.tokenFigmaId;
+    }
     return;
   }
   if (item.property === "effectStyleId") {
@@ -241,8 +349,11 @@ async function applyPlanItem(item: ApplyTokenPlanItem): Promise<ApplyTokenPlanIt
   }
 }
 
+export const applyPlanItemForTest = applyPlanItem;
+
 export async function applyTokens(options: ApplyTokensOptions = {}): Promise<ApplyTokensResponse> {
   const dryRun = options.dryRun !== false;
+  const failureMode = options.failureMode ?? "best-effort";
   const [usageResponse, tokens] = await Promise.all([
     collectTokenUsage(options.nodeIds),
     collectDesignTokens(),
@@ -251,6 +362,30 @@ export async function applyTokens(options: ApplyTokensOptions = {}): Promise<App
   const planned = planApplyTokens(options, usageResponse.usages, tokens, context, usageResponse.scope);
   if (dryRun) return planned;
 
-  const results = await Promise.all(planned.results.map((item) => applyPlanItem(item)));
-  return buildResponse(false, context, usageResponse.scope, results);
+  const results: ApplyTokenPlanItem[] = [];
+  if (failureMode === "atomic") {
+    let stopped = false;
+    for (const item of planned.results) {
+      if (stopped && item.status === "planned") {
+        results.push({ ...item, action: "skip", status: "skipped", message: "Atomic mode stopped after an earlier failure" });
+        continue;
+      }
+      const result = await applyPlanItem(item);
+      if (result.status === "error") stopped = true;
+      results.push(result);
+    }
+  } else if (failureMode === "grouped") {
+    const groups = new Map<TokenGroup, ApplyTokenPlanItem[]>();
+    for (const item of planned.results) {
+      const groupItems = groups.get(item.group) ?? [];
+      groupItems.push(item);
+      groups.set(item.group, groupItems);
+    }
+    for (const groupItems of groups.values()) {
+      results.push(...await Promise.all(groupItems.map((item) => applyPlanItem(item))));
+    }
+  } else {
+    results.push(...await Promise.all(planned.results.map((item) => applyPlanItem(item))));
+  }
+  return buildResponse(false, failureMode, context, usageResponse.scope, results);
 }

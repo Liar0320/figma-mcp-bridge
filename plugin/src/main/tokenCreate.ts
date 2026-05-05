@@ -3,7 +3,7 @@ import { collectDesignTokens, normalizeTokenPath, normalizeTokenSegment, type No
 export type CreateDesignTokenSource = "variable" | "style";
 export type CreateDesignTokenVariableType = "COLOR" | "FLOAT" | "STRING" | "BOOLEAN";
 export type CreateDesignTokenStyleType = "paint" | "text" | "effect" | "grid";
-export type CreateDesignTokenConflictStrategy = "error" | "skip";
+export type CreateDesignTokenConflictStrategy = "error" | "skip" | "allow-same-value-different-group";
 export type CreateDesignTokenCollectionStrategy = "upsert-by-name" | "create-new";
 export type CreateDesignTokenModeStrategy = "use-default" | "create-missing";
 
@@ -28,6 +28,14 @@ export type CreateDesignTokensOptions = {
   conflictStrategy?: CreateDesignTokenConflictStrategy;
 };
 
+export type CreateDesignTokenWarning = {
+  code: "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN";
+  message: string;
+  tokenPath?: string;
+  group?: TokenGroup;
+  value?: unknown;
+};
+
 export type CreateDesignTokenPlanItem = {
   name: string;
   path: string;
@@ -43,6 +51,7 @@ export type CreateDesignTokenPlanItem = {
   existingTokenPath?: string;
   figmaId?: string;
   message?: string;
+  warnings?: CreateDesignTokenWarning[];
 };
 
 export type CreateDesignTokensContext = {
@@ -62,6 +71,7 @@ export type CreateDesignTokensResponse = {
     skipped: number;
     errors: number;
   };
+  warnings?: CreateDesignTokenWarning[];
   results: CreateDesignTokenPlanItem[];
 };
 
@@ -307,22 +317,42 @@ export function planCreateDesignTokens(
   const dryRun = options.dryRun !== false;
   const conflictStrategy = options.conflictStrategy ?? "error";
   const existingByPath = new Map<string, NormalizedToken>(existingTokens.map((token) => [token.path, token]));
-  const existingValueKeys = new Set(existingTokens.map((token) => stableStringify(token.value ?? token.valuesByMode)));
+  const existingByValue = new Map<string, NormalizedToken[]>();
+  for (const existingToken of existingTokens) {
+    const value = existingToken.value ?? existingToken.valuesByMode;
+    if (value === undefined) continue;
+    const key = stableStringify(value);
+    const bucket = existingByValue.get(key) ?? [];
+    bucket.push(existingToken);
+    existingByValue.set(key, bucket);
+  }
 
   const results: CreateDesignTokenPlanItem[] = options.tokens.map((token) => {
     const source = inferSource(token);
     const path = normalizeTokenPath(token.group, token.name);
     const existing = existingByPath.get(path);
     const valueKey = stableStringify(token.valuesByMode ?? token.value);
-    const duplicateValue = existingValueKeys.has(valueKey);
+    const sameValueTokens = existingByValue.get(valueKey) ?? [];
     const variableType = source === "variable" ? inferVariableType(token) : undefined;
     const styleType = source === "style" ? inferStyleType(token) : undefined;
     const collectionName = token.collectionName ?? options.collectionName ?? DEFAULT_COLLECTION_NAME;
+    const sameGroupValueToken = sameValueTokens.find((existingToken) => existingToken.group === token.group);
+    const crossGroupFloatTokens = variableType === "FLOAT"
+      ? sameValueTokens.filter((existingToken) => existingToken.group !== token.group && ["spacing", "radius", "size", "opacity"].includes(existingToken.group))
+      : [];
+    const crossGroupWarnings: CreateDesignTokenWarning[] = crossGroupFloatTokens.map((existingToken) => ({
+      code: "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN",
+      tokenPath: existingToken.path,
+      group: existingToken.group,
+      value: existingToken.value ?? existingToken.valuesByMode,
+      message: `Same FLOAT value already exists in ${existingToken.group} token ${existingToken.path}; treating as semantic overlap warning, not a blocking conflict.`,
+    }));
 
-    if (existing || duplicateValue) {
+    if (existing || sameGroupValueToken || (sameValueTokens.length > 0 && crossGroupWarnings.length === 0)) {
       const message = existing
         ? `Token path already exists: ${path}`
         : "A token with the same value already exists";
+      const blockingToken = existing ?? sameGroupValueToken ?? sameValueTokens[0];
       return {
         name: token.name,
         path,
@@ -335,7 +365,7 @@ export function planCreateDesignTokens(
         variableType,
         styleType,
         collectionName: source === "variable" ? collectionName : undefined,
-        existingTokenPath: existing?.path,
+        existingTokenPath: blockingToken?.path,
         message,
       };
     }
@@ -400,6 +430,8 @@ export function planCreateDesignTokens(
       variableType,
       styleType,
       collectionName: source === "variable" ? collectionName : undefined,
+      existingTokenPath: crossGroupWarnings[0]?.tokenPath,
+      warnings: crossGroupWarnings.length > 0 ? crossGroupWarnings : undefined,
     };
   });
 
@@ -423,6 +455,8 @@ function buildResponse(
     { planned: 0, created: 0, skipped: 0, errors: 0 },
   );
 
+  const warnings = results.flatMap((item) => item.warnings ?? []);
+
   return {
     version: 1,
     dryRun,
@@ -432,6 +466,7 @@ function buildResponse(
       requested: options.tokens.length,
       ...counts,
     },
+    warnings: warnings.length > 0 ? warnings : undefined,
     results,
   };
 }

@@ -4,6 +4,13 @@ import { collectTokenUsage, type TokenUsageEntry, type TokenUsageResponse } from
 
 export type TokenProposalReason = "repeated-unbound-value" | "repeated-exact-value-match" | "duplicate-token-consolidation";
 
+export type ExistingTokenValueConflict = {
+  tokenPath: string;
+  group: TokenGroup;
+  value: unknown;
+  figmaId?: string;
+};
+
 export type ProposedDesignToken = {
   id: string;
   group: TokenGroup;
@@ -15,6 +22,9 @@ export type ProposedDesignToken = {
   occurrences: number;
   nodes: Array<{ nodeId: string; nodeName: string; property: string }>;
   basedOnTokenPaths?: string[];
+  conflictsWithExistingTokenValue?: ExistingTokenValueConflict[];
+  recommendedAction?: "create-semantic-radius-token" | "create-semantic-float-token" | "reuse-existing-token" | "manual-review";
+  requiresManualReview?: boolean;
   creationHint: {
     recommendedSource: "variable" | "style";
     variableType?: "COLOR" | "FLOAT" | "STRING" | "BOOLEAN";
@@ -131,13 +141,36 @@ type UsageBucket = {
   basedOnTokenPaths: Set<string>;
 };
 
+const FLOAT_SEMANTIC_GROUPS: TokenGroup[] = ["spacing", "radius", "size", "opacity"];
+
+const existingSameValueConflicts = (tokens: NormalizedToken[], group: TokenGroup, value: unknown): ExistingTokenValueConflict[] => {
+  if (typeof value !== "number" || !FLOAT_SEMANTIC_GROUPS.includes(group)) return [];
+  const valueKey = stableStringify(value);
+  return tokens
+    .filter((token) => token.group !== group && FLOAT_SEMANTIC_GROUPS.includes(token.group) && stableStringify(token.value ?? token.valuesByMode) === valueKey)
+    .map((token) => ({
+      tokenPath: token.path,
+      group: token.group,
+      value: token.value ?? token.valuesByMode,
+      figmaId: token.figmaId,
+    }));
+};
+
+const recommendedActionForCrossGroup = (group: TokenGroup): ProposedDesignToken["recommendedAction"] => {
+  if (group === "radius") return "create-semantic-radius-token";
+  if (FLOAT_SEMANTIC_GROUPS.includes(group)) return "create-semantic-float-token";
+  return "manual-review";
+};
+
 const pushUsageBucketProposal = (
   proposals: ProposedDesignToken[],
   bucket: UsageBucket,
   reason: TokenProposalReason,
+  existingTokens: NormalizedToken[],
 ): void => {
   const name = proposalName(bucket.group, bucket.value);
   const signature = valueSignature(bucket.group, bucket.value);
+  const conflictsWithExistingTokenValue = existingSameValueConflicts(existingTokens, bucket.group, bucket.value);
   proposals.push({
     id: `proposal:${reason}:${shortHash(signature)}`,
     group: bucket.group,
@@ -153,6 +186,9 @@ const pushUsageBucketProposal = (
       property: usage.property,
     })),
     basedOnTokenPaths: bucket.basedOnTokenPaths.size > 0 ? [...bucket.basedOnTokenPaths] : undefined,
+    conflictsWithExistingTokenValue: conflictsWithExistingTokenValue.length > 0 ? conflictsWithExistingTokenValue : undefined,
+    recommendedAction: conflictsWithExistingTokenValue.length > 0 ? recommendedActionForCrossGroup(bucket.group) : undefined,
+    requiresManualReview: conflictsWithExistingTokenValue.length > 0 ? true : undefined,
     creationHint: recommendedSource(bucket.group),
   });
 };
@@ -186,12 +222,12 @@ export function proposeDesignTokensFromData(
   }
 
   for (const bucket of [...unboundBuckets.values()].filter((item) => item.usages.length >= minOccurrences)) {
-    pushUsageBucketProposal(proposals, bucket, "repeated-unbound-value");
+    pushUsageBucketProposal(proposals, bucket, "repeated-unbound-value", tokens);
   }
 
   if (options.includeExactValueMatches) {
     for (const bucket of [...exactBuckets.values()].filter((item) => item.usages.length >= minOccurrences)) {
-      pushUsageBucketProposal(proposals, bucket, "repeated-exact-value-match");
+      pushUsageBucketProposal(proposals, bucket, "repeated-exact-value-match", tokens);
     }
   }
 

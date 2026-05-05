@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { planApplyTokens } from "../dist-test/src/main/tokenApply.js";
+import { applyPlanItemForTest, planApplyTokens } from "../dist-test/src/main/tokenApply.js";
 
 const context = {
   fileName: "Apply Test",
@@ -38,6 +38,14 @@ const tokens = [
     group: "spacing",
     source: "variable",
     value: 16,
+  },
+  {
+    path: "radius.md",
+    name: "Radius/Md",
+    group: "radius",
+    source: "variable",
+    value: 16,
+    figmaId: "VariableID:1:3",
   },
 ];
 
@@ -96,6 +104,14 @@ function testPlansStyleApplication() {
   assert.equal(response.results[0].tokenFigmaId, "S:1:2");
 }
 
+function testDryRunWarnsTextStyleAsyncRuntimeConstraint() {
+  const response = planApplyTokens({}, [exactTypographyUsage], tokens, context, scope);
+
+  assert.equal(response.summary.planned, 1);
+  assert.equal(response.warnings?.[0]?.code, "DYNAMIC_PAGE_TEXT_STYLE_ASYNC_REQUIRED");
+  assert.match(response.warnings[0].message, /setTextStyleIdAsync/);
+}
+
 function testFiltersByTokenPathAndMatchType() {
   const boundUsage = {
     ...exactFillUsage,
@@ -146,13 +162,135 @@ function testExplicitDryRunFalseStillPlansForMutationPhase() {
   assert.equal(response.results[0].action, "bind-variable");
 }
 
+async function testTextStyleApplicationUsesAsyncApi() {
+  const calls = [];
+  globalThis.figma = {
+    async getStyleByIdAsync(id) {
+      return { id, type: "TEXT", name: "Body/Base" };
+    },
+    async getNodeByIdAsync(id) {
+      return {
+        id,
+        type: "TEXT",
+        visible: true,
+        async setTextStyleIdAsync(styleId) {
+          calls.push(styleId);
+        },
+        set textStyleId(_styleId) {
+          throw new Error("sync textStyleId setter should not be used in dynamic-page mode");
+        },
+      };
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactTypographyUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(calls, ["S:1:2"]);
+}
+
+function testPartialSuccessMetadataIncludesGroups() {
+  const response = planApplyTokens({ dryRun: false, failureMode: "grouped" }, [exactFillUsage, exactTypographyUsage], tokens, context, scope);
+
+  assert.equal(response.failureMode, "grouped");
+  assert.equal(response.summary.partialSuccess, false);
+  assert.deepEqual(response.summary.plannedGroups.sort(), ["color", "typography"]);
+}
+
+const exactRadiusUsage = {
+  nodeId: "1:3",
+  nodeName: "Card",
+  nodeType: "RECTANGLE",
+  property: "cornerRadius",
+  group: "radius",
+  value: 16,
+  match: {
+    type: "exactValue",
+    tokenPath: "radius.md",
+    tokenName: "Radius/Md",
+    tokenSource: "variable",
+    tokenFigmaId: "VariableID:1:3",
+    confidence: 0.8,
+    reason: "cornerRadius exactly matches a radius token value",
+  },
+};
+
+async function testNoopFloatBindingReturnsError() {
+  globalThis.figma = {
+    variables: {
+      async getVariableByIdAsync(id) {
+        return { id, name: "Radius/Md" };
+      },
+    },
+    async getNodeByIdAsync(id) {
+      return {
+        id,
+        type: "RECTANGLE",
+        visible: true,
+        boundVariables: {},
+        setBoundVariable() {
+          // Simulate a Figma API no-op / unsupported field path that does not throw.
+        },
+      };
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactRadiusUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.message, /Variable binding verification failed for cornerRadius/);
+}
+
+async function testCornerRadiusBindsIndividualRadiusFields() {
+  const calls = [];
+  const node = {
+    id: "1:3",
+    type: "RECTANGLE",
+    visible: true,
+    boundVariables: {},
+    setBoundVariable(field, variable) {
+      calls.push(field);
+      this.boundVariables[field] = { id: variable.id };
+    },
+  };
+  globalThis.figma = {
+    variables: {
+      async getVariableByIdAsync(id) {
+        return { id, name: "Radius/Md" };
+      },
+    },
+    async getNodeByIdAsync() {
+      return node;
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactRadiusUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(calls, ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"]);
+}
+
 async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
     ["testPlansStyleApplication", testPlansStyleApplication],
+    ["testDryRunWarnsTextStyleAsyncRuntimeConstraint", testDryRunWarnsTextStyleAsyncRuntimeConstraint],
     ["testFiltersByTokenPathAndMatchType", testFiltersByTokenPathAndMatchType],
     ["testMissingFigmaIdSkips", testMissingFigmaIdSkips],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
+    ["testTextStyleApplicationUsesAsyncApi", testTextStyleApplicationUsesAsyncApi],
+    ["testPartialSuccessMetadataIncludesGroups", testPartialSuccessMetadataIncludesGroups],
+    ["testNoopFloatBindingReturnsError", testNoopFloatBindingReturnsError],
+    ["testCornerRadiusBindsIndividualRadiusFields", testCornerRadiusBindsIndividualRadiusFields],
   ];
   const failures = [];
   let passed = 0;
