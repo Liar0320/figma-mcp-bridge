@@ -147,11 +147,61 @@ function testDuplicateTokenValuesBecomeConsolidationProposals() {
   assert.deepEqual(response.proposals[0].basedOnTokenPaths, ["color.brand.primary", "color.semantic.action"]);
 }
 
+function testFloatProposalsIncludeCrossGroupSameValueContext() {
+  const usage = {
+    ...baseUsage,
+    usages: [
+      usageEntry({
+        nodeId: "1:2",
+        nodeName: "Card",
+        property: "cornerRadius",
+        group: "radius",
+        value: 16,
+      }),
+      usageEntry({
+        nodeId: "1:3",
+        nodeName: "Button",
+        property: "cornerRadius",
+        group: "radius",
+        value: 16,
+      }),
+    ],
+    summary: {
+      totalUsages: 2,
+      matchedUsages: 0,
+      unmatchedUsages: 2,
+      coverage: 0,
+      byGroup: { radius: { total: 2, matched: 0, unmatched: 2 } },
+      byMatchType: { boundVariable: 0, style: 0, exactValue: 0, none: 2 },
+    },
+  };
+  const tokens = [
+    {
+      path: "size.md",
+      name: "size/md",
+      group: "size",
+      source: "variable",
+      value: 16,
+      figmaId: "VariableID:1:16",
+    },
+  ];
+
+  const response = proposeDesignTokensFromData(tokens, usage, baseAudit);
+
+  assert.equal(response.summary.proposalCount, 1);
+  assert.equal(response.proposals[0].path, "radius.proposed.16");
+  assert.equal(response.proposals[0].conflictsWithExistingTokenValue?.[0]?.tokenPath, "size.md");
+  assert.equal(response.proposals[0].conflictsWithExistingTokenValue[0].group, "size");
+  assert.equal(response.proposals[0].recommendedAction, "create-semantic-radius-token");
+  assert.equal(response.proposals[0].requiresManualReview, true);
+}
+
 async function runTests() {
   const tests = [
     ["testRepeatedUnboundValuesBecomeDryRunProposals", testRepeatedUnboundValuesBecomeDryRunProposals],
     ["testExactMatchesAreExcludedUnlessRequested", testExactMatchesAreExcludedUnlessRequested],
     ["testDuplicateTokenValuesBecomeConsolidationProposals", testDuplicateTokenValuesBecomeConsolidationProposals],
+    ["testFloatProposalsIncludeCrossGroupSameValueContext", testFloatProposalsIncludeCrossGroupSameValueContext],
   ];
   const failures = [];
   let passed = 0;

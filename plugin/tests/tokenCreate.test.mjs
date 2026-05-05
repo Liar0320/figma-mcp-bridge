@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  createStyleForTest,
   planCreateDesignTokens,
   toVariableValueForTest,
   variableNameForCreatedToken,
@@ -76,6 +77,60 @@ function testConflictsErrorByDefaultAndCanSkip() {
   assert.equal(skipped.results[0].action, "skip");
 }
 
+function testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken() {
+  const existingTokens = [
+    {
+      path: "size.md",
+      name: "size/md",
+      group: "size",
+      source: "variable",
+      value: 16,
+      figmaId: "VariableID:1:16",
+    },
+  ];
+
+  const response = planCreateDesignTokens(
+    {
+      tokens: [{ name: "proposed/16", group: "radius", value: 16 }],
+    },
+    existingTokens,
+    context,
+  );
+
+  assert.equal(response.summary.errors, 0);
+  assert.equal(response.summary.planned, 1);
+  assert.equal(response.results[0].path, "radius.proposed.16");
+  assert.equal(response.results[0].status, "planned");
+  assert.equal(response.results[0].existingTokenPath, "size.md");
+  assert.equal(response.results[0].warnings?.[0]?.code, "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN");
+  assert.equal(response.warnings?.[0]?.code, "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN");
+}
+
+function testSameGroupFloatSameValueStillConflicts() {
+  const existingTokens = [
+    {
+      path: "radius.sm",
+      name: "radius/sm",
+      group: "radius",
+      source: "variable",
+      value: 16,
+      figmaId: "VariableID:1:16",
+    },
+  ];
+
+  const response = planCreateDesignTokens(
+    {
+      tokens: [{ name: "proposed/16", group: "radius", value: 16 }],
+    },
+    existingTokens,
+    context,
+  );
+
+  assert.equal(response.summary.errors, 1);
+  assert.equal(response.results[0].action, "error");
+  assert.equal(response.results[0].existingTokenPath, "radius.sm");
+}
+
 function testExplicitDryRunFalseStillPlansForMutationPhase() {
   const response = planCreateDesignTokens(
     {
@@ -86,7 +141,12 @@ function testExplicitDryRunFalseStillPlansForMutationPhase() {
           name: "Body/Base",
           group: "typography",
           source: "style",
-          value: { fontSize: 16 },
+          value: {
+            fontName: { family: "Inter", style: "Regular" },
+            fontSize: 16,
+            lineHeight: { unit: "PIXELS", value: 24 },
+            letterSpacing: { unit: "PIXELS", value: 0 },
+          },
         },
       ],
     },
@@ -123,13 +183,103 @@ function testFloatVariableNamesPreserveSemanticGroupOnRoundTrip() {
   assert.equal(variableNameForCreatedToken("color", "Brand/Primary", "COLOR"), "Brand/Primary");
 }
 
+function testDryRunReportsIncompleteTextStyleAsError() {
+  const response = planCreateDesignTokens(
+    {
+      tokens: [
+        {
+          name: "Body/Base",
+          group: "typography",
+          source: "style",
+          value: { fontSize: 16 },
+        },
+      ],
+    },
+    [],
+    context,
+  );
+
+  assert.equal(response.summary.errors, 1);
+  assert.equal(response.results[0].action, "error");
+  assert.match(response.results[0].message, /Text style value must include fontName or fontFamily\/fontStyle/);
+}
+
+async function testTextStyleCreationPersistsTypographyFieldsAndLoadsFont() {
+  const loadedFonts = [];
+  const createdStyles = [];
+  globalThis.figma = {
+    async loadFontAsync(fontName) {
+      loadedFonts.push(fontName);
+    },
+    createTextStyle() {
+      const style = { id: "S:1", name: "" };
+      createdStyles.push(style);
+      return style;
+    },
+  };
+
+  const style = await createStyleForTest({
+    name: "type/hero/title",
+    path: "typography.type.hero.title",
+    group: "typography",
+    source: "style",
+    action: "create-style",
+    status: "planned",
+    styleType: "text",
+    value: {
+      fontName: { family: "Inter", style: "Bold" },
+      fontSize: 58,
+      lineHeight: { unit: "PIXELS", value: 66 },
+      letterSpacing: { unit: "PIXELS", value: 1.2 },
+      textDecoration: "NONE",
+    },
+  });
+
+  assert.deepEqual(loadedFonts, [{ family: "Inter", style: "Bold" }]);
+  assert.equal(createdStyles.length, 1);
+  assert.equal(style.name, "type/hero/title");
+  assert.deepEqual(style.fontName, { family: "Inter", style: "Bold" });
+  assert.equal(style.fontSize, 58);
+  assert.deepEqual(style.lineHeight, { unit: "PIXELS", value: 66 });
+  assert.deepEqual(style.letterSpacing, { unit: "PIXELS", value: 1.2 });
+  assert.equal(style.textDecoration, "NONE");
+}
+
+async function testTextStyleCreationRejectsIncompleteTypographyValue() {
+  globalThis.figma = {
+    async loadFontAsync() {},
+    createTextStyle() {
+      throw new Error("createTextStyle should not be called for invalid typography values");
+    },
+  };
+
+  await assert.rejects(
+    createStyleForTest({
+      name: "type/body/base",
+      path: "typography.type.body.base",
+      group: "typography",
+      source: "style",
+      action: "create-style",
+      status: "planned",
+      styleType: "text",
+      value: { fontSize: 16 },
+    }),
+    /Text style value must include fontName or fontFamily\/fontStyle/,
+  );
+}
+
 async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
     ["testConflictsErrorByDefaultAndCanSkip", testConflictsErrorByDefaultAndCanSkip],
+    ["testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken", testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken],
+    ["testSameGroupFloatSameValueStillConflicts", testSameGroupFloatSameValueStillConflicts],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
     ["testColorValueConversionSupportsHexAndOpacityObject", testColorValueConversionSupportsHexAndOpacityObject],
     ["testFloatVariableNamesPreserveSemanticGroupOnRoundTrip", testFloatVariableNamesPreserveSemanticGroupOnRoundTrip],
+    ["testDryRunReportsIncompleteTextStyleAsError", testDryRunReportsIncompleteTextStyleAsError],
+    ["testTextStyleCreationPersistsTypographyFieldsAndLoadsFont", testTextStyleCreationPersistsTypographyFieldsAndLoadsFont],
+    ["testTextStyleCreationRejectsIncompleteTypographyValue", testTextStyleCreationRejectsIncompleteTypographyValue],
   ];
   const failures = [];
   let passed = 0;

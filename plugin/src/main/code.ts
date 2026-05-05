@@ -63,12 +63,13 @@ type ServerRequest = {
     collectionName?: string;
     collectionStrategy?: "upsert-by-name" | "create-new";
     modeStrategy?: "use-default" | "create-missing";
-    conflictStrategy?: "error" | "skip";
+    conflictStrategy?: "error" | "skip" | "allow-same-value-different-group";
     tokenPaths?: string[];
     matchTypes?: Array<"exactValue" | "style" | "boundVariable">;
     exportFormat?: "json" | "dtcg" | "css" | "tailwind";
     includeMetadata?: boolean;
     cssSelector?: string;
+    failureMode?: "best-effort" | "atomic" | "grouped";
   };
 };
 
@@ -425,6 +426,7 @@ const handleRequest = async (
             tokenPaths: request.params?.tokenPaths,
             matchTypes: request.params?.matchTypes,
             dryRun: request.params?.dryRun,
+            failureMode: request.params?.failureMode,
           }),
         };
       }

@@ -3,7 +3,7 @@ import { collectDesignTokens, normalizeTokenPath, normalizeTokenSegment, type No
 export type CreateDesignTokenSource = "variable" | "style";
 export type CreateDesignTokenVariableType = "COLOR" | "FLOAT" | "STRING" | "BOOLEAN";
 export type CreateDesignTokenStyleType = "paint" | "text" | "effect" | "grid";
-export type CreateDesignTokenConflictStrategy = "error" | "skip";
+export type CreateDesignTokenConflictStrategy = "error" | "skip" | "allow-same-value-different-group";
 export type CreateDesignTokenCollectionStrategy = "upsert-by-name" | "create-new";
 export type CreateDesignTokenModeStrategy = "use-default" | "create-missing";
 
@@ -28,6 +28,14 @@ export type CreateDesignTokensOptions = {
   conflictStrategy?: CreateDesignTokenConflictStrategy;
 };
 
+export type CreateDesignTokenWarning = {
+  code: "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN";
+  message: string;
+  tokenPath?: string;
+  group?: TokenGroup;
+  value?: unknown;
+};
+
 export type CreateDesignTokenPlanItem = {
   name: string;
   path: string;
@@ -43,6 +51,7 @@ export type CreateDesignTokenPlanItem = {
   existingTokenPath?: string;
   figmaId?: string;
   message?: string;
+  warnings?: CreateDesignTokenWarning[];
 };
 
 export type CreateDesignTokensContext = {
@@ -62,6 +71,7 @@ export type CreateDesignTokensResponse = {
     skipped: number;
     errors: number;
   };
+  warnings?: CreateDesignTokenWarning[];
   results: CreateDesignTokenPlanItem[];
 };
 
@@ -191,7 +201,80 @@ export function variableNameForCreatedToken(group: TokenGroup, name: string, var
   return firstSegment === group ? name : `${group}/${name}`;
 }
 
-const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
+const toFontName = (value: unknown): FontName => {
+  if (!isObject(value)) {
+    throw new Error("Text style value must be an object");
+  }
+
+  if (isObject(value.fontName)) {
+    const family = value.fontName.family;
+    const style = value.fontName.style;
+    if (typeof family === "string" && family.trim() && typeof style === "string" && style.trim()) {
+      return { family, style };
+    }
+  }
+
+  if (typeof value.fontFamily === "string" && value.fontFamily.trim() && typeof value.fontStyle === "string" && value.fontStyle.trim()) {
+    return { family: value.fontFamily, style: value.fontStyle };
+  }
+
+  throw new Error("Text style value must include fontName or fontFamily/fontStyle");
+};
+
+const toLineHeight = (value: unknown): LineHeight | undefined => {
+  if (value === undefined) return undefined;
+  if (!isObject(value) || typeof value.unit !== "string") {
+    throw new Error("Text style lineHeight must be an object with unit");
+  }
+  if (value.unit === "AUTO") return { unit: "AUTO" };
+  if (value.unit !== "PIXELS" && value.unit !== "PERCENT") {
+    throw new Error("Text style lineHeight.unit must be PIXELS, PERCENT, or AUTO");
+  }
+  if (typeof value.value !== "number" || value.value < 0) {
+    throw new Error("Text style lineHeight.value must be a nonnegative number");
+  }
+  return { unit: value.unit, value: value.value };
+};
+
+const toLetterSpacing = (value: unknown): LetterSpacing | undefined => {
+  if (value === undefined) return undefined;
+  if (!isObject(value) || typeof value.unit !== "string") {
+    throw new Error("Text style letterSpacing must be an object with unit");
+  }
+  if (value.unit !== "PIXELS" && value.unit !== "PERCENT") {
+    throw new Error("Text style letterSpacing.unit must be PIXELS or PERCENT");
+  }
+  if (typeof value.value !== "number") {
+    throw new Error("Text style letterSpacing.value must be a number");
+  }
+  return { unit: value.unit, value: value.value };
+};
+
+const validateTextStyleValue = (value: unknown): void => {
+  if (!isObject(value)) throw new Error("Text style value must be an object");
+  toFontName(value);
+  if (typeof value.fontSize !== "number" || value.fontSize <= 0) {
+    throw new Error("Text style value must include a positive fontSize");
+  }
+  toLineHeight(value.lineHeight);
+  toLetterSpacing(value.letterSpacing);
+};
+
+const applyOptionalTextStyleFields = (style: TextStyle, value: Record<string, unknown>): void => {
+  if (typeof value.fontSize === "number") style.fontSize = value.fontSize;
+  if (typeof value.textDecoration === "string") style.textDecoration = value.textDecoration as TextDecoration;
+  if (typeof value.textCase === "string") style.textCase = value.textCase as TextCase;
+  if (typeof value.paragraphIndent === "number") style.paragraphIndent = value.paragraphIndent;
+  if (typeof value.paragraphSpacing === "number") style.paragraphSpacing = value.paragraphSpacing;
+
+  const lineHeight = toLineHeight(value.lineHeight);
+  if (lineHeight) style.lineHeight = lineHeight;
+
+  const letterSpacing = toLetterSpacing(value.letterSpacing);
+  if (letterSpacing) style.letterSpacing = letterSpacing;
+};
+
+const createStyle = async (item: CreateDesignTokenPlanItem): Promise<BaseStyle> => {
   if (item.styleType === "paint") {
     const style = figma.createPaintStyle();
     style.name = item.name;
@@ -199,9 +282,16 @@ const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
     return style;
   }
   if (item.styleType === "text") {
+    if (!isObject(item.value)) throw new Error("Text style value must be an object");
+    const fontName = toFontName(item.value);
+    if (typeof item.value.fontSize !== "number" || item.value.fontSize <= 0) {
+      throw new Error("Text style value must include a positive fontSize");
+    }
+    await figma.loadFontAsync(fontName);
     const style = figma.createTextStyle();
     style.name = item.name;
-    if (isObject(item.value) && typeof item.value.fontSize === "number") style.fontSize = item.value.fontSize;
+    style.fontName = fontName;
+    applyOptionalTextStyleFields(style, item.value);
     return style;
   }
   if (item.styleType === "effect") {
@@ -217,6 +307,7 @@ const createStyle = (item: CreateDesignTokenPlanItem): BaseStyle => {
 };
 
 export const toVariableValueForTest = toVariableValue;
+export const createStyleForTest = createStyle;
 
 export function planCreateDesignTokens(
   options: CreateDesignTokensOptions,
@@ -226,22 +317,42 @@ export function planCreateDesignTokens(
   const dryRun = options.dryRun !== false;
   const conflictStrategy = options.conflictStrategy ?? "error";
   const existingByPath = new Map<string, NormalizedToken>(existingTokens.map((token) => [token.path, token]));
-  const existingValueKeys = new Set(existingTokens.map((token) => stableStringify(token.value ?? token.valuesByMode)));
+  const existingByValue = new Map<string, NormalizedToken[]>();
+  for (const existingToken of existingTokens) {
+    const value = existingToken.value ?? existingToken.valuesByMode;
+    if (value === undefined) continue;
+    const key = stableStringify(value);
+    const bucket = existingByValue.get(key) ?? [];
+    bucket.push(existingToken);
+    existingByValue.set(key, bucket);
+  }
 
   const results: CreateDesignTokenPlanItem[] = options.tokens.map((token) => {
     const source = inferSource(token);
     const path = normalizeTokenPath(token.group, token.name);
     const existing = existingByPath.get(path);
     const valueKey = stableStringify(token.valuesByMode ?? token.value);
-    const duplicateValue = existingValueKeys.has(valueKey);
+    const sameValueTokens = existingByValue.get(valueKey) ?? [];
     const variableType = source === "variable" ? inferVariableType(token) : undefined;
     const styleType = source === "style" ? inferStyleType(token) : undefined;
     const collectionName = token.collectionName ?? options.collectionName ?? DEFAULT_COLLECTION_NAME;
+    const sameGroupValueToken = sameValueTokens.find((existingToken) => existingToken.group === token.group);
+    const crossGroupFloatTokens = variableType === "FLOAT"
+      ? sameValueTokens.filter((existingToken) => existingToken.group !== token.group && ["spacing", "radius", "size", "opacity"].includes(existingToken.group))
+      : [];
+    const crossGroupWarnings: CreateDesignTokenWarning[] = crossGroupFloatTokens.map((existingToken) => ({
+      code: "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN",
+      tokenPath: existingToken.path,
+      group: existingToken.group,
+      value: existingToken.value ?? existingToken.valuesByMode,
+      message: `Same FLOAT value already exists in ${existingToken.group} token ${existingToken.path}; treating as semantic overlap warning, not a blocking conflict.`,
+    }));
 
-    if (existing || duplicateValue) {
+    if (existing || sameGroupValueToken || (sameValueTokens.length > 0 && crossGroupWarnings.length === 0)) {
       const message = existing
         ? `Token path already exists: ${path}`
         : "A token with the same value already exists";
+      const blockingToken = existing ?? sameGroupValueToken ?? sameValueTokens[0];
       return {
         name: token.name,
         path,
@@ -254,7 +365,7 @@ export function planCreateDesignTokens(
         variableType,
         styleType,
         collectionName: source === "variable" ? collectionName : undefined,
-        existingTokenPath: existing?.path,
+        existingTokenPath: blockingToken?.path,
         message,
       };
     }
@@ -288,6 +399,25 @@ export function planCreateDesignTokens(
       };
     }
 
+    if (source === "style" && styleType === "text") {
+      try {
+        validateTextStyleValue(token.value);
+      } catch (error) {
+        return {
+          name: token.name,
+          path,
+          group: token.group,
+          source,
+          action: "error",
+          status: "error",
+          value: token.value,
+          valuesByMode: token.valuesByMode,
+          styleType,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
     return {
       name: token.name,
       path,
@@ -300,6 +430,8 @@ export function planCreateDesignTokens(
       variableType,
       styleType,
       collectionName: source === "variable" ? collectionName : undefined,
+      existingTokenPath: crossGroupWarnings[0]?.tokenPath,
+      warnings: crossGroupWarnings.length > 0 ? crossGroupWarnings : undefined,
     };
   });
 
@@ -323,6 +455,8 @@ function buildResponse(
     { planned: 0, created: 0, skipped: 0, errors: 0 },
   );
 
+  const warnings = results.flatMap((item) => item.warnings ?? []);
+
   return {
     version: 1,
     dryRun,
@@ -332,6 +466,7 @@ function buildResponse(
       requested: options.tokens.length,
       ...counts,
     },
+    warnings: warnings.length > 0 ? warnings : undefined,
     results,
   };
 }
@@ -365,7 +500,7 @@ export async function createDesignTokens(options: CreateDesignTokensOptions): Pr
           item.status = "created";
           item.figmaId = variable.id;
         } else if (item.action === "create-style") {
-          const style = createStyle(item);
+          const style = await createStyle(item);
           item.status = "created";
           item.figmaId = style.id;
         }

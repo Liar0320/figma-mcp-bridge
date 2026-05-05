@@ -228,9 +228,9 @@ export const toolInputSchemas = {
       .optional()
       .describe("Mode handling strategy. First implementation writes default mode values."),
     conflictStrategy: z
-      .enum(["error", "skip"])
+      .enum(["error", "skip", "allow-same-value-different-group"])
       .optional()
-      .describe("What to do if a token path/value already exists. Default error."),
+      .describe("What to do if a token path/value already exists. Default error. Cross-group same-value FLOAT tokens are warnings by default."),
   }),
 
   apply_tokens: z.object({
@@ -252,6 +252,10 @@ export const toolInputSchemas = {
       .boolean()
       .optional()
       .describe("Preview apply plan only by default. Set explicitly to false to bind variables/apply styles in Figma."),
+    failureMode: z
+      .enum(["best-effort", "atomic", "grouped"])
+      .optional()
+      .describe("How to proceed after mutation failures. Default best-effort. atomic stops after first failure; grouped reports failures by token group."),
   }),
 
   get_screenshot: z.object({
