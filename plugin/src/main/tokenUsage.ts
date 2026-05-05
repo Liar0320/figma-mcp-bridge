@@ -205,6 +205,18 @@ const boundVariableId = (source: unknown, field: string): string | undefined => 
   return undefined;
 };
 
+const uniformCornerRadiusVariableId = (source: unknown): string | undefined => {
+  const fields = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
+  const ids = fields.map((field) => boundVariableId(source, field));
+  const first = ids[0];
+  return first && ids.every((id) => id === first) ? first : undefined;
+};
+
+const boundVariableIdForUsage = (source: unknown, property: string): string | undefined => {
+  if (property === "cornerRadius") return boundVariableId(source, property) ?? uniformCornerRadiusVariableId(source);
+  return boundVariableId(source, property);
+};
+
 const styleIdFromNode = (node: SceneNode, field: string): string | undefined => {
   const value = (node as unknown as Record<string, unknown>)[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -265,7 +277,7 @@ const addFloatUsage = (
   indexes: TokenIndexes,
 ): void => {
   if (typeof value !== "number" || value === 0) return;
-  const variableId = boundVariableId(node, property);
+  const variableId = boundVariableIdForUsage(node, property);
   const variableToken = variableId ? indexes.byFigmaId.get(variableId) : undefined;
   const exactToken = indexes.floatByGroupAndValue.get(floatKey(group, value));
 

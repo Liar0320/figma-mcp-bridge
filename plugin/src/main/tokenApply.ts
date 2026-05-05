@@ -213,10 +213,62 @@ const paintIndexFromProperty = (property: string, field: "fills" | "strokes"): n
 
 const clonePaints = (value: unknown): Paint[] => Array.isArray(value) ? [...(value as Paint[])] : [];
 
+const VARIABLE_BINDABLE_NODE_FIELDS: Record<string, string[]> = {
+  cornerRadius: ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"],
+  topLeftRadius: ["topLeftRadius"],
+  topRightRadius: ["topRightRadius"],
+  bottomRightRadius: ["bottomRightRadius"],
+  bottomLeftRadius: ["bottomLeftRadius"],
+  itemSpacing: ["itemSpacing"],
+  paddingTop: ["paddingTop"],
+  paddingRight: ["paddingRight"],
+  paddingBottom: ["paddingBottom"],
+  paddingLeft: ["paddingLeft"],
+  width: ["width"],
+  height: ["height"],
+  minWidth: ["minWidth"],
+  maxWidth: ["maxWidth"],
+  minHeight: ["minHeight"],
+  maxHeight: ["maxHeight"],
+  opacity: ["opacity"],
+  strokeWeight: ["strokeWeight"],
+  strokeTopWeight: ["strokeTopWeight"],
+  strokeRightWeight: ["strokeRightWeight"],
+  strokeBottomWeight: ["strokeBottomWeight"],
+  strokeLeftWeight: ["strokeLeftWeight"],
+};
+
+type BindableSceneNode = SceneNode & {
+  boundVariables?: Record<string, { id?: string } | Array<{ id?: string }>>;
+  setBoundVariable?: (field: string, variable: Variable | null) => void;
+};
+
+const firstBoundVariableId = (binding: unknown): string | undefined => {
+  if (isObject(binding) && typeof binding.id === "string") return binding.id;
+  if (Array.isArray(binding)) {
+    const first = binding.find((item) => isObject(item) && typeof item.id === "string");
+    if (isObject(first)) return first.id as string;
+  }
+  return undefined;
+};
+
+const boundVariableIdForField = (node: BindableSceneNode, field: string): string | undefined => (
+  firstBoundVariableId(node.boundVariables?.[field])
+);
+
+const assertNodeVariableBinding = (node: BindableSceneNode, fields: string[], variableId: string, sourceProperty: string): void => {
+  const missing = fields.filter((field) => boundVariableIdForField(node, field) !== variableId);
+  if (missing.length > 0) {
+    throw new Error(
+      `Variable binding verification failed for ${sourceProperty}; expected ${variableId} on ${missing.join(", ")}`,
+    );
+  }
+};
+
 async function applyVariableToNode(node: SceneNode, item: ApplyTokenPlanItem): Promise<void> {
   if (!item.tokenFigmaId) throw new Error("tokenFigmaId is required");
   const variable = await getVariableById(item.tokenFigmaId);
-  const asBindable = node as SceneNode & { setBoundVariable?: (field: string, variable: Variable) => void };
+  const asBindable = node as BindableSceneNode;
 
   const fillIndex = paintIndexFromProperty(item.property, "fills");
   if (fillIndex !== undefined) {
@@ -238,12 +290,14 @@ async function applyVariableToNode(node: SceneNode, item: ApplyTokenPlanItem): P
     return;
   }
 
-  if (typeof asBindable.setBoundVariable === "function") {
-    asBindable.setBoundVariable(item.property, variable);
-    return;
+  const fields = VARIABLE_BINDABLE_NODE_FIELDS[item.property];
+  if (!fields) throw new Error(`Unsupported variable binding target ${item.property}`);
+  if (typeof asBindable.setBoundVariable !== "function") {
+    throw new Error(`Node does not support variable binding for ${item.property}`);
   }
 
-  throw new Error(`Node does not support variable binding for ${item.property}`);
+  for (const field of fields) asBindable.setBoundVariable(field, variable);
+  assertNodeVariableBinding(asBindable, fields, variable.id, item.property);
 }
 
 async function applyStyleToNode(node: SceneNode, item: ApplyTokenPlanItem): Promise<void> {

@@ -39,6 +39,14 @@ const tokens = [
     source: "variable",
     value: 16,
   },
+  {
+    path: "radius.md",
+    name: "Radius/Md",
+    group: "radius",
+    source: "variable",
+    value: 16,
+    figmaId: "VariableID:1:3",
+  },
 ];
 
 const exactFillUsage = {
@@ -192,6 +200,85 @@ function testPartialSuccessMetadataIncludesGroups() {
   assert.deepEqual(response.summary.plannedGroups.sort(), ["color", "typography"]);
 }
 
+const exactRadiusUsage = {
+  nodeId: "1:3",
+  nodeName: "Card",
+  nodeType: "RECTANGLE",
+  property: "cornerRadius",
+  group: "radius",
+  value: 16,
+  match: {
+    type: "exactValue",
+    tokenPath: "radius.md",
+    tokenName: "Radius/Md",
+    tokenSource: "variable",
+    tokenFigmaId: "VariableID:1:3",
+    confidence: 0.8,
+    reason: "cornerRadius exactly matches a radius token value",
+  },
+};
+
+async function testNoopFloatBindingReturnsError() {
+  globalThis.figma = {
+    variables: {
+      async getVariableByIdAsync(id) {
+        return { id, name: "Radius/Md" };
+      },
+    },
+    async getNodeByIdAsync(id) {
+      return {
+        id,
+        type: "RECTANGLE",
+        visible: true,
+        boundVariables: {},
+        setBoundVariable() {
+          // Simulate a Figma API no-op / unsupported field path that does not throw.
+        },
+      };
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactRadiusUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.message, /Variable binding verification failed for cornerRadius/);
+}
+
+async function testCornerRadiusBindsIndividualRadiusFields() {
+  const calls = [];
+  const node = {
+    id: "1:3",
+    type: "RECTANGLE",
+    visible: true,
+    boundVariables: {},
+    setBoundVariable(field, variable) {
+      calls.push(field);
+      this.boundVariables[field] = { id: variable.id };
+    },
+  };
+  globalThis.figma = {
+    variables: {
+      async getVariableByIdAsync(id) {
+        return { id, name: "Radius/Md" };
+      },
+    },
+    async getNodeByIdAsync() {
+      return node;
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactRadiusUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(calls, ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"]);
+}
+
 async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
@@ -202,6 +289,8 @@ async function runTests() {
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
     ["testTextStyleApplicationUsesAsyncApi", testTextStyleApplicationUsesAsyncApi],
     ["testPartialSuccessMetadataIncludesGroups", testPartialSuccessMetadataIncludesGroups],
+    ["testNoopFloatBindingReturnsError", testNoopFloatBindingReturnsError],
+    ["testCornerRadiusBindsIndividualRadiusFields", testCornerRadiusBindsIndividualRadiusFields],
   ];
   const failures = [];
   let passed = 0;
