@@ -69,6 +69,7 @@ const tokenSource = z.enum(["variable", "style"]);
 const variableType = z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]);
 const styleType = z.enum(["paint", "text", "effect", "grid"]);
 const applyTokenMatchType = z.enum(["exactValue", "style", "boundVariable"]);
+const designTokenExportFormat = z.enum(["json", "dtcg", "css", "tailwind"]);
 const designTokenInput = z.object({
   name: z.string().min(1),
   group: tokenGroup,
@@ -182,6 +183,25 @@ export const toolInputSchemas = {
       .max(200)
       .optional()
       .describe("Maximum proposals to return. Default 50."),
+  }),
+
+  export_design_tokens: z.object({
+    format: designTokenExportFormat
+      .optional()
+      .describe("Export format. Defaults to json."),
+    tokenPaths: z
+      .array(z.string().min(1))
+      .optional()
+      .describe("Optional token paths to include. If omitted, exports all tokens."),
+    includeMetadata: z
+      .boolean()
+      .optional()
+      .describe("Whether to include metadata/extensions where supported. Default true."),
+    cssSelector: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("CSS selector for css format. Default :root."),
   }),
 
   create_design_tokens: z.object({
@@ -374,6 +394,7 @@ const rpcToArgs: Record<
   get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
   audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   propose_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
+  export_design_tokens: (_nodeIds, params) => ({ ...params }),
   create_design_tokens: (_nodeIds, params) => ({ ...params }),
   apply_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),

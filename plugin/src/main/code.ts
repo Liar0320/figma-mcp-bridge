@@ -2,6 +2,7 @@ import { serializeNode } from "./serializer";
 import { applyTokens } from "./tokenApply";
 import { collectDesignTokenAudit } from "./tokenAudit";
 import { createDesignTokens } from "./tokenCreate";
+import { exportDesignTokens } from "./tokenExport";
 import { collectDesignTokenProposals } from "./tokenPropose";
 import { collectDesignTokens, summarizeTokens } from "./tokens";
 import { collectTokenUsage } from "./tokenUsage";
@@ -21,6 +22,7 @@ type RequestType =
   | "propose_design_tokens"
   | "create_design_tokens"
   | "apply_tokens"
+  | "export_design_tokens"
   | "get_screenshot"
   | "create_frame"
   | "create_text"
@@ -64,6 +66,9 @@ type ServerRequest = {
     conflictStrategy?: "error" | "skip";
     tokenPaths?: string[];
     matchTypes?: Array<"exactValue" | "style" | "boundVariable">;
+    exportFormat?: "json" | "dtcg" | "css" | "tailwind";
+    includeMetadata?: boolean;
+    cssSelector?: string;
   };
 };
 
@@ -86,6 +91,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_token_usage",
   "audit_design_tokens",
   "propose_design_tokens",
+  "export_design_tokens",
   "get_screenshot",
 ]);
 
@@ -366,6 +372,30 @@ const handleRequest = async (
             includeDuplicateTokenValues: request.params?.includeDuplicateTokenValues,
             maxProposals: request.params?.maxProposals,
           }),
+        };
+      }
+      case "export_design_tokens": {
+        const tokens = await collectDesignTokens();
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: exportDesignTokens(
+            tokens,
+            {
+              fileName: figma.root.name,
+              currentPage: {
+                id: figma.currentPage.id,
+                name: figma.currentPage.name,
+              },
+              summary: summarizeTokens(tokens),
+            },
+            {
+              format: request.params?.exportFormat,
+              tokenPaths: request.params?.tokenPaths,
+              includeMetadata: request.params?.includeMetadata,
+              cssSelector: request.params?.cssSelector,
+            },
+          ),
         };
       }
       case "create_design_tokens": {

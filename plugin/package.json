@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"vite build --watch\" \"vite build --watch -c vite.config.main.ts\"",
     "build": "vite build && vite build -c vite.config.main.ts",
-    "test": "tsc -p tsconfig.test.json && node scripts/fix-test-imports.mjs && node tests/write.test.mjs && node tests/tokenUsage.test.mjs && node tests/tokens.test.mjs && node tests/tokenAudit.test.mjs && node tests/tokenPropose.test.mjs && node tests/tokenCreate.test.mjs && node tests/tokenApply.test.mjs"
+    "test": "tsc -p tsconfig.test.json && node scripts/fix-test-imports.mjs && node tests/write.test.mjs && node tests/tokenUsage.test.mjs && node tests/tokens.test.mjs && node tests/tokenAudit.test.mjs && node tests/tokenPropose.test.mjs && node tests/tokenCreate.test.mjs && node tests/tokenApply.test.mjs && node tests/tokenExport.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
