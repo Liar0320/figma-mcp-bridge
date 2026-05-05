@@ -201,11 +201,12 @@ export function registerTools(server: McpServer, node: Node): void {
     "apply_tokens",
     "Apply existing Figma design tokens to matching node properties. Defaults to dry-run preview; actual binding/style application requires dryRun=false.",
     toolInputSchemas.apply_tokens.shape,
-    async ({ nodeIds, tokenPaths, matchTypes, dryRun }): Promise<ToolResult> => {
+    async ({ nodeIds, tokenPaths, matchTypes, dryRun, failureMode }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (tokenPaths !== undefined) params.tokenPaths = tokenPaths;
       if (matchTypes !== undefined) params.matchTypes = matchTypes;
       if (dryRun !== undefined) params.dryRun = dryRun;
+      if (failureMode !== undefined) params.failureMode = failureMode;
       return renderResponse(() => node.sendWithParams("apply_tokens", nodeIds, params));
     }
   );

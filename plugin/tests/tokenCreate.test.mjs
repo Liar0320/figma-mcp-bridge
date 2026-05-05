@@ -77,6 +77,60 @@ function testConflictsErrorByDefaultAndCanSkip() {
   assert.equal(skipped.results[0].action, "skip");
 }
 
+function testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken() {
+  const existingTokens = [
+    {
+      path: "size.md",
+      name: "size/md",
+      group: "size",
+      source: "variable",
+      value: 16,
+      figmaId: "VariableID:1:16",
+    },
+  ];
+
+  const response = planCreateDesignTokens(
+    {
+      tokens: [{ name: "proposed/16", group: "radius", value: 16 }],
+    },
+    existingTokens,
+    context,
+  );
+
+  assert.equal(response.summary.errors, 0);
+  assert.equal(response.summary.planned, 1);
+  assert.equal(response.results[0].path, "radius.proposed.16");
+  assert.equal(response.results[0].status, "planned");
+  assert.equal(response.results[0].existingTokenPath, "size.md");
+  assert.equal(response.results[0].warnings?.[0]?.code, "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN");
+  assert.equal(response.warnings?.[0]?.code, "CROSS_GROUP_SAME_VALUE_FLOAT_TOKEN");
+}
+
+function testSameGroupFloatSameValueStillConflicts() {
+  const existingTokens = [
+    {
+      path: "radius.sm",
+      name: "radius/sm",
+      group: "radius",
+      source: "variable",
+      value: 16,
+      figmaId: "VariableID:1:16",
+    },
+  ];
+
+  const response = planCreateDesignTokens(
+    {
+      tokens: [{ name: "proposed/16", group: "radius", value: 16 }],
+    },
+    existingTokens,
+    context,
+  );
+
+  assert.equal(response.summary.errors, 1);
+  assert.equal(response.results[0].action, "error");
+  assert.equal(response.results[0].existingTokenPath, "radius.sm");
+}
+
 function testExplicitDryRunFalseStillPlansForMutationPhase() {
   const response = planCreateDesignTokens(
     {
@@ -218,6 +272,8 @@ async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
     ["testConflictsErrorByDefaultAndCanSkip", testConflictsErrorByDefaultAndCanSkip],
+    ["testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken", testCrossGroupFloatSameValueWarnsButDoesNotBlockSemanticToken],
+    ["testSameGroupFloatSameValueStillConflicts", testSameGroupFloatSameValueStillConflicts],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
     ["testColorValueConversionSupportsHexAndOpacityObject", testColorValueConversionSupportsHexAndOpacityObject],
     ["testFloatVariableNamesPreserveSemanticGroupOnRoundTrip", testFloatVariableNamesPreserveSemanticGroupOnRoundTrip],

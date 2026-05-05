@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { planApplyTokens } from "../dist-test/src/main/tokenApply.js";
+import { applyPlanItemForTest, planApplyTokens } from "../dist-test/src/main/tokenApply.js";
 
 const context = {
   fileName: "Apply Test",
@@ -96,6 +96,14 @@ function testPlansStyleApplication() {
   assert.equal(response.results[0].tokenFigmaId, "S:1:2");
 }
 
+function testDryRunWarnsTextStyleAsyncRuntimeConstraint() {
+  const response = planApplyTokens({}, [exactTypographyUsage], tokens, context, scope);
+
+  assert.equal(response.summary.planned, 1);
+  assert.equal(response.warnings?.[0]?.code, "DYNAMIC_PAGE_TEXT_STYLE_ASYNC_REQUIRED");
+  assert.match(response.warnings[0].message, /setTextStyleIdAsync/);
+}
+
 function testFiltersByTokenPathAndMatchType() {
   const boundUsage = {
     ...exactFillUsage,
@@ -146,13 +154,54 @@ function testExplicitDryRunFalseStillPlansForMutationPhase() {
   assert.equal(response.results[0].action, "bind-variable");
 }
 
+async function testTextStyleApplicationUsesAsyncApi() {
+  const calls = [];
+  globalThis.figma = {
+    async getStyleByIdAsync(id) {
+      return { id, type: "TEXT", name: "Body/Base" };
+    },
+    async getNodeByIdAsync(id) {
+      return {
+        id,
+        type: "TEXT",
+        visible: true,
+        async setTextStyleIdAsync(styleId) {
+          calls.push(styleId);
+        },
+        set textStyleId(_styleId) {
+          throw new Error("sync textStyleId setter should not be used in dynamic-page mode");
+        },
+      };
+    },
+  };
+
+  const result = await applyPlanItemForTest({
+    ...planApplyTokens({ dryRun: false }, [exactTypographyUsage], tokens, context, scope).results[0],
+    status: "planned",
+  });
+
+  assert.equal(result.status, "applied");
+  assert.deepEqual(calls, ["S:1:2"]);
+}
+
+function testPartialSuccessMetadataIncludesGroups() {
+  const response = planApplyTokens({ dryRun: false, failureMode: "grouped" }, [exactFillUsage, exactTypographyUsage], tokens, context, scope);
+
+  assert.equal(response.failureMode, "grouped");
+  assert.equal(response.summary.partialSuccess, false);
+  assert.deepEqual(response.summary.plannedGroups.sort(), ["color", "typography"]);
+}
+
 async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
     ["testPlansStyleApplication", testPlansStyleApplication],
+    ["testDryRunWarnsTextStyleAsyncRuntimeConstraint", testDryRunWarnsTextStyleAsyncRuntimeConstraint],
     ["testFiltersByTokenPathAndMatchType", testFiltersByTokenPathAndMatchType],
     ["testMissingFigmaIdSkips", testMissingFigmaIdSkips],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
+    ["testTextStyleApplicationUsesAsyncApi", testTextStyleApplicationUsesAsyncApi],
+    ["testPartialSuccessMetadataIncludesGroups", testPartialSuccessMetadataIncludesGroups],
   ];
   const failures = [];
   let passed = 0;
