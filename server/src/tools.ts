@@ -183,6 +183,20 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "export_design_tokens",
+    "Export normalized Figma design tokens as JSON, DTCG JSON, CSS variables, or Tailwind theme tokens. Read-only; does not modify Figma.",
+    toolInputSchemas.export_design_tokens.shape,
+    async ({ format, tokenPaths, includeMetadata, cssSelector }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (format !== undefined) params.exportFormat = format;
+      if (tokenPaths !== undefined) params.tokenPaths = tokenPaths;
+      if (includeMetadata !== undefined) params.includeMetadata = includeMetadata;
+      if (cssSelector !== undefined) params.cssSelector = cssSelector;
+      return renderResponse(() => node.sendWithParams("export_design_tokens", undefined, params));
+    }
+  );
+
+  server.tool(
     "create_design_tokens",
     "Create Figma design tokens from a reviewed token list. Defaults to dry-run preview; actual creation requires dryRun=false.",
     toolInputSchemas.create_design_tokens.shape,
