@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   planCreateDesignTokens,
   toVariableValueForTest,
+  variableNameForCreatedToken,
 } from "../dist-test/src/main/tokenCreate.js";
 
 const context = {
@@ -114,12 +115,21 @@ function testColorValueConversionSupportsHexAndOpacityObject() {
   });
 }
 
+function testFloatVariableNamesPreserveSemanticGroupOnRoundTrip() {
+  assert.equal(variableNameForCreatedToken("radius", "sm", "FLOAT"), "radius/sm");
+  assert.equal(variableNameForCreatedToken("radius", "radius/sm", "FLOAT"), "radius/sm");
+  assert.equal(variableNameForCreatedToken("spacing", "md", "FLOAT"), "spacing/md");
+  assert.equal(variableNameForCreatedToken("size", "card", "FLOAT"), "size/card");
+  assert.equal(variableNameForCreatedToken("color", "Brand/Primary", "COLOR"), "Brand/Primary");
+}
+
 async function runTests() {
   const tests = [
     ["testDryRunIsDefaultAndPlansOnly", testDryRunIsDefaultAndPlansOnly],
     ["testConflictsErrorByDefaultAndCanSkip", testConflictsErrorByDefaultAndCanSkip],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
     ["testColorValueConversionSupportsHexAndOpacityObject", testColorValueConversionSupportsHexAndOpacityObject],
+    ["testFloatVariableNamesPreserveSemanticGroupOnRoundTrip", testFloatVariableNamesPreserveSemanticGroupOnRoundTrip],
   ];
   const failures = [];
   let passed = 0;
