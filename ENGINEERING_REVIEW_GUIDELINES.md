@@ -294,7 +294,7 @@ cd ../plugin && npm install
 {
   "figma-bridge": {
     "command": "node",
-    "args": ["/Users/was/Desktop/code/figma-mcp-bridge/server/dist/index.js"]
+    "args": ["/path/to/figma-mcp-bridge/server/dist/index.js"]
   }
 }
 ```
@@ -302,7 +302,7 @@ cd ../plugin && npm install
 4. 在 Figma 中导入并运行：
 
 ```text
-/Users/was/Desktop/code/figma-mcp-bridge/plugin/manifest.json
+/path/to/figma-mcp-bridge/plugin/manifest.json
 ```
 
 5. 手动验证：
