@@ -47,7 +47,7 @@ export class Leader {
       server.on(
         "upgrade",
         (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          if (req.url === "/ws") {
+          if (req.url?.startsWith("/ws")) {
             this.bridge.handleUpgrade(req, socket, head);
           } else {
             socket.destroy();
@@ -55,7 +55,6 @@ export class Leader {
         }
       );
 
-      // Fail fast if port is already in use
       server.once("error", (err: NodeJS.ErrnoException) => {
         reject(
           err.code === "EADDRINUSE"
@@ -81,6 +80,11 @@ export class Leader {
       try {
         const rpcReq: RPCRequest = JSON.parse(body);
 
+        if (rpcReq.tool === "list_files") {
+          this.sendJSON(res, 200, { data: this.bridge.listConnectedFiles() });
+          return;
+        }
+
         const validationError = validateRpc(
           rpcReq.tool,
           rpcReq.nodeIds,
@@ -91,12 +95,19 @@ export class Leader {
           return;
         }
 
-        // Currently the only tool that is not forwarded to the plugin is save_screenshots
-        // If more are added we need to refactor to a better abstraction.
+        const fileKey = rpcReq.fileKey;
+
         if (rpcReq.tool === "save_screenshots") {
           const params = rpcReq.params ?? {};
+          const sender = {
+            sendWithParams: (
+              requestType: string,
+              nodeIds?: string[],
+              sendParams?: Record<string, unknown>
+            ) => this.bridge.sendWithParams(requestType, nodeIds, sendParams, fileKey),
+          };
           const result = await executeSaveScreenshots(
-            this.bridge,
+            sender,
             params.items as Parameters<typeof executeSaveScreenshots>[1],
             params.format as ExportFormat | undefined,
             params.scale as number | undefined
@@ -108,7 +119,8 @@ export class Leader {
         const resp = await this.bridge.sendWithParams(
           rpcReq.tool,
           rpcReq.nodeIds,
-          rpcReq.params
+          rpcReq.params,
+          fileKey
         );
 
         this.sendJSON(

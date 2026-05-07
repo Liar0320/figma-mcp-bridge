@@ -115,19 +115,37 @@ const batchOperation = z.object({
   ref: z.string().min(1).optional(),
 });
 
+const fileKeyField = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    "The fileKey/session id of the Figma file to query. Required when multiple files are connected. Use list_files to see connected files."
+  );
+
+const withFileKey = <T extends z.ZodRawShape>(shape: T) =>
+  z.object({ ...shape, fileKey: fileKeyField });
+
 export const toolInputSchemas = {
-  get_node: z.object({
+  get_document: withFileKey({}),
+  get_selection: withFileKey({}),
+  get_styles: withFileKey({}),
+  get_metadata: withFileKey({}),
+  get_variable_defs: withFileKey({}),
+  get_design_tokens: withFileKey({}),
+
+  get_node: withFileKey({
     nodeId: figmaNodeId.describe("The node ID to fetch"),
   }),
 
-  get_design_context: z.object({
+  get_design_context: withFileKey({
     depth: z
       .number()
       .optional()
       .describe("How many levels deep to traverse the node tree (default 2)"),
   }),
 
-  get_token_usage: z.object({
+  get_token_usage: withFileKey({
     nodeIds: z
       .array(figmaNodeId)
       .optional()
@@ -136,7 +154,7 @@ export const toolInputSchemas = {
       ),
   }),
 
-  audit_design_tokens: z.object({
+  audit_design_tokens: withFileKey({
     nodeIds: z
       .array(figmaNodeId)
       .optional()
@@ -155,7 +173,7 @@ export const toolInputSchemas = {
       .describe("Whether to include UNUSED_TOKEN findings for tokens not referenced in the scanned scope. Default true."),
   }),
 
-  propose_design_tokens: z.object({
+  propose_design_tokens: withFileKey({
     nodeIds: z
       .array(figmaNodeId)
       .optional()
@@ -185,7 +203,7 @@ export const toolInputSchemas = {
       .describe("Maximum proposals to return. Default 50."),
   }),
 
-  export_design_tokens: z.object({
+  export_design_tokens: withFileKey({
     format: designTokenExportFormat
       .optional()
       .describe("Export format. Defaults to json."),
@@ -204,7 +222,7 @@ export const toolInputSchemas = {
       .describe("CSS selector for css format. Default :root."),
   }),
 
-  create_design_tokens: z.object({
+  create_design_tokens: withFileKey({
     tokens: z
       .array(designTokenInput)
       .min(1)
@@ -233,7 +251,7 @@ export const toolInputSchemas = {
       .describe("What to do if a token path/value already exists. Default error. Cross-group same-value FLOAT tokens are warnings by default."),
   }),
 
-  apply_tokens: z.object({
+  apply_tokens: withFileKey({
     nodeIds: z
       .array(figmaNodeId)
       .optional()
@@ -258,7 +276,7 @@ export const toolInputSchemas = {
       .describe("How to proceed after mutation failures. Default best-effort. atomic stops after first failure; grouped reports failures by token group."),
   }),
 
-  get_screenshot: z.object({
+  get_screenshot: withFileKey({
     nodeIds: z
       .array(figmaNodeId)
       .optional()
@@ -274,7 +292,7 @@ export const toolInputSchemas = {
       .describe("Export scale for raster formats (default 2)"),
   }),
 
-  save_screenshots: z.object({
+  save_screenshots: withFileKey({
     items: z
       .array(
         z.object({
@@ -294,6 +312,7 @@ export const toolInputSchemas = {
     scale: z.number().optional(),
   }),
   create_frame: createNodeBase.extend({
+    fileKey: fileKeyField,
     fills: z.array(solidPaint).optional(),
     strokes: z.array(solidPaint).optional(),
     cornerRadius: z.number().nonnegative().optional(),
@@ -302,82 +321,84 @@ export const toolInputSchemas = {
     padding: paddingSchema.optional(),
   }),
   create_text: createNodeBase.extend({
+    fileKey: fileKeyField,
     characters: z.string().optional(),
     style: textStyleSchema.optional(),
     fills: z.array(solidPaint).optional(),
   }),
   create_rectangle: createNodeBase.extend({
+    fileKey: fileKeyField,
     fills: z.array(solidPaint).optional(),
     strokes: z.array(solidPaint).optional(),
     cornerRadius: z.number().nonnegative().optional(),
   }),
-  append_children: z.object({
+  append_children: withFileKey({
     parentId: figmaNodeId,
     childIds: z.array(figmaNodeId).min(1),
   }),
-  set_position: z.object({
+  set_position: withFileKey({
     nodeId: figmaNodeId,
     x: z.number(),
     y: z.number(),
   }),
-  set_size: z.object({
+  set_size: withFileKey({
     nodeId: figmaNodeId,
     width: z.number().positive(),
     height: z.number().positive(),
   }),
-  set_fills: z.object({
+  set_fills: withFileKey({
     nodeId: figmaNodeId,
     fills: z.array(solidPaint),
   }),
-  set_strokes: z.object({
+  set_strokes: withFileKey({
     nodeId: figmaNodeId,
     strokes: z.array(solidPaint),
   }),
-  set_corner_radius: z.object({
+  set_corner_radius: withFileKey({
     nodeId: figmaNodeId,
     cornerRadius: z.number().nonnegative(),
   }),
-  set_text_content: z.object({
+  set_text_content: withFileKey({
     nodeId: figmaNodeId,
     characters: z.string(),
   }),
-  set_text_style: z.object({
+  set_text_style: withFileKey({
     nodeId: figmaNodeId,
     style: textStyleSchema,
   }),
-  set_layout_mode: z.object({
+  set_layout_mode: withFileKey({
     nodeId: figmaNodeId,
     layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]),
   }),
-  set_padding: z.object({
+  set_padding: withFileKey({
     nodeId: figmaNodeId,
     top: z.number().nonnegative().optional(),
     right: z.number().nonnegative().optional(),
     bottom: z.number().nonnegative().optional(),
     left: z.number().nonnegative().optional(),
   }),
-  set_item_spacing: z.object({
+  set_item_spacing: withFileKey({
     nodeId: figmaNodeId,
     itemSpacing: z.number(),
   }),
-  set_node_name: z.object({
+  set_node_name: withFileKey({
     nodeId: figmaNodeId,
     name: nodeName,
   }),
-  rename_node: z.object({
+  rename_node: withFileKey({
     nodeId: figmaNodeId,
     name: nodeName,
   }),
-  find_nodes: z.object({
+  find_nodes: withFileKey({
     nodeId: figmaNodeId.optional(),
     name: z.string().min(1).optional(),
     key: z.string().min(1).optional(),
     parentId: figmaNodeId.optional(),
   }),
-  delete_node: z.object({
+  delete_node: withFileKey({
     nodeId: figmaNodeId,
   }),
-  batch_mutation: z.object({
+  batch_mutation: withFileKey({
     operations: z.array(batchOperation).min(1).max(100),
   }),
 } as const;
@@ -393,7 +414,13 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
-  get_node: (nodeIds) => ({ nodeId: nodeIds?.[0] }),
+  get_document: (_nodeIds, params) => ({ ...params }),
+  get_selection: (_nodeIds, params) => ({ ...params }),
+  get_styles: (_nodeIds, params) => ({ ...params }),
+  get_metadata: (_nodeIds, params) => ({ ...params }),
+  get_variable_defs: (_nodeIds, params) => ({ ...params }),
+  get_design_tokens: (_nodeIds, params) => ({ ...params }),
+  get_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_token_usage: (nodeIds, params) => ({ nodeIds, ...params }),
   audit_design_tokens: (nodeIds, params) => ({ nodeIds, ...params }),

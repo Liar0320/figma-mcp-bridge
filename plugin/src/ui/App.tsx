@@ -30,20 +30,29 @@ type PluginResponse = {
 };
 
 type PluginStatus = {
+  fileKey: string;
   fileName: string;
   selectionCount: number;
 };
 
-const WS_URL = "ws://localhost:1994/ws";
+const buildWsUrl = (status: PluginStatus): string => {
+  const params = new URLSearchParams({
+    fileKey: status.fileKey,
+    fileName: status.fileName,
+  });
+  return `ws://localhost:1994/ws?${params.toString()}`;
+};
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<PluginStatus>({
+    fileKey: "pending",
     fileName: "Unknown file",
     selectionCount: 0
   });
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
+  const intentionalClose = useRef(false);
 
   const statusLabel = useMemo(
     () => (connected ? "WebSocket Connected" : "Disconnected"),
@@ -79,10 +88,12 @@ export default function App() {
   useEffect(() => {
     const connect = () => {
       if (socketRef.current) {
+        intentionalClose.current = true;
         socketRef.current.close();
       }
 
-      const ws = new WebSocket(WS_URL);
+      intentionalClose.current = false;
+      const ws = new WebSocket(buildWsUrl(status));
       socketRef.current = ws;
 
       ws.onopen = () => {
@@ -91,7 +102,13 @@ export default function App() {
       };
 
       ws.onclose = () => {
+        if (socketRef.current !== ws) {
+          return;
+        }
         setConnected(false);
+        if (intentionalClose.current) {
+          return;
+        }
         if (reconnectTimer.current === null) {
           reconnectTimer.current = window.setTimeout(() => {
             reconnectTimer.current = null;
@@ -117,10 +134,11 @@ export default function App() {
         window.clearTimeout(reconnectTimer.current);
       }
       if (socketRef.current) {
+        intentionalClose.current = true;
         socketRef.current.close();
       }
     };
-  }, []);
+  }, [status.fileKey, status.fileName]);
 
 
 

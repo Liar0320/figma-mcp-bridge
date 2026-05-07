@@ -76,18 +76,32 @@ type WriteToolName = keyof Pick<
 /** Registers all read and write MCP tools exposed by the bridge server. */
 export function registerTools(server: McpServer, node: Node): void {
   server.tool(
+    "list_files",
+    "List Figma files currently connected to the bridge plugin. Use fileKey from this list when multiple files are connected.",
+    async (): Promise<ToolResult> => {
+      return renderResponse(async () => ({
+        type: "list_files",
+        requestId: "",
+        data: await node.listConnectedFiles(),
+      }));
+    }
+  );
+
+  server.tool(
     "get_document",
     "Get the current Figma page document tree",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_document"));
+    toolInputSchemas.get_document.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_document", undefined, fileKey));
     }
   );
 
   server.tool(
     "get_selection",
     "Get the currently selected nodes in Figma",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_selection"));
+    toolInputSchemas.get_selection.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_selection", undefined, fileKey));
     }
   );
 
@@ -95,24 +109,26 @@ export function registerTools(server: McpServer, node: Node): void {
     "get_node",
     "Get a specific Figma node by ID. Must use colon format, e.g. '4029:12345', never use hyphens.",
     toolInputSchemas.get_node.shape,
-    async ({ nodeId }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_node", [nodeId]));
+    async ({ nodeId, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_node", [nodeId], fileKey));
     }
   );
 
   server.tool(
     "get_styles",
     "Get all local styles in the document",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_styles"));
+    toolInputSchemas.get_styles.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_styles", undefined, fileKey));
     }
   );
 
   server.tool(
     "get_metadata",
     "Get metadata about the current Figma document including file name, pages, and current page info",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_metadata"));
+    toolInputSchemas.get_metadata.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_metadata", undefined, fileKey));
     }
   );
 
@@ -120,13 +136,13 @@ export function registerTools(server: McpServer, node: Node): void {
     "get_design_context",
     "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context.",
     toolInputSchemas.get_design_context.shape,
-    async ({ depth }): Promise<ToolResult> => {
+    async ({ depth, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (depth !== undefined && depth > 0) {
         params.depth = depth;
       }
       return renderResponse(() =>
-        node.sendWithParams("get_design_context", undefined, params)
+        node.sendWithParams("get_design_context", undefined, params, fileKey)
       );
     }
   );
@@ -134,16 +150,18 @@ export function registerTools(server: McpServer, node: Node): void {
   server.tool(
     "get_variable_defs",
     "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans).",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_variable_defs"));
+    toolInputSchemas.get_variable_defs.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_variable_defs", undefined, fileKey));
     }
   );
 
   server.tool(
     "get_design_tokens",
     "Get normalized design tokens from local Figma variables and styles. Returns AI-friendly token paths, values, modes, sources, and summary counts.",
-    async (): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_design_tokens"));
+    toolInputSchemas.get_design_tokens.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_design_tokens", undefined, fileKey));
     }
   );
 
@@ -151,8 +169,8 @@ export function registerTools(server: McpServer, node: Node): void {
     "get_token_usage",
     "Scan the current selection, current page, or specific nodes for design token usage. Maps node properties to local variables/styles and exact token value matches.",
     toolInputSchemas.get_token_usage.shape,
-    async ({ nodeIds }): Promise<ToolResult> => {
-      return renderResponse(() => node.sendWithParams("get_token_usage", nodeIds));
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.sendWithParams("get_token_usage", nodeIds, undefined, fileKey));
     }
   );
 
@@ -160,11 +178,11 @@ export function registerTools(server: McpServer, node: Node): void {
     "audit_design_tokens",
     "Audit design token coverage and consistency for the current selection, current page, or specific nodes. Returns read-only issues and recommendations based on token graph and usage mapping.",
     toolInputSchemas.audit_design_tokens.shape,
-    async ({ nodeIds, minCoverage, includeUnusedTokens }): Promise<ToolResult> => {
+    async ({ nodeIds, minCoverage, includeUnusedTokens, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (minCoverage !== undefined) params.minCoverage = minCoverage;
       if (includeUnusedTokens !== undefined) params.includeUnusedTokens = includeUnusedTokens;
-      return renderResponse(() => node.sendWithParams("audit_design_tokens", nodeIds, params));
+      return renderResponse(() => node.sendWithParams("audit_design_tokens", nodeIds, params, fileKey));
     }
   );
 
@@ -172,13 +190,13 @@ export function registerTools(server: McpServer, node: Node): void {
     "propose_design_tokens",
     "Propose new or consolidated design tokens from repeated unbound values and audit findings. Read-only; does not create variables or styles.",
     toolInputSchemas.propose_design_tokens.shape,
-    async ({ nodeIds, minOccurrences, includeExactValueMatches, includeDuplicateTokenValues, maxProposals }): Promise<ToolResult> => {
+    async ({ nodeIds, minOccurrences, includeExactValueMatches, includeDuplicateTokenValues, maxProposals, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (minOccurrences !== undefined) params.minOccurrences = minOccurrences;
       if (includeExactValueMatches !== undefined) params.includeExactValueMatches = includeExactValueMatches;
       if (includeDuplicateTokenValues !== undefined) params.includeDuplicateTokenValues = includeDuplicateTokenValues;
       if (maxProposals !== undefined) params.maxProposals = maxProposals;
-      return renderResponse(() => node.sendWithParams("propose_design_tokens", nodeIds, params));
+      return renderResponse(() => node.sendWithParams("propose_design_tokens", nodeIds, params, fileKey));
     }
   );
 
@@ -186,13 +204,13 @@ export function registerTools(server: McpServer, node: Node): void {
     "export_design_tokens",
     "Export normalized Figma design tokens as JSON, DTCG JSON, CSS variables, or Tailwind theme tokens. Read-only; does not modify Figma.",
     toolInputSchemas.export_design_tokens.shape,
-    async ({ format, tokenPaths, includeMetadata, cssSelector }): Promise<ToolResult> => {
+    async ({ format, tokenPaths, includeMetadata, cssSelector, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (format !== undefined) params.exportFormat = format;
       if (tokenPaths !== undefined) params.tokenPaths = tokenPaths;
       if (includeMetadata !== undefined) params.includeMetadata = includeMetadata;
       if (cssSelector !== undefined) params.cssSelector = cssSelector;
-      return renderResponse(() => node.sendWithParams("export_design_tokens", undefined, params));
+      return renderResponse(() => node.sendWithParams("export_design_tokens", undefined, params, fileKey));
     }
   );
 
@@ -200,14 +218,14 @@ export function registerTools(server: McpServer, node: Node): void {
     "create_design_tokens",
     "Create Figma design tokens from a reviewed token list. Defaults to dry-run preview; actual creation requires dryRun=false.",
     toolInputSchemas.create_design_tokens.shape,
-    async ({ tokens, dryRun, collectionName, collectionStrategy, modeStrategy, conflictStrategy }): Promise<ToolResult> => {
+    async ({ tokens, dryRun, collectionName, collectionStrategy, modeStrategy, conflictStrategy, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = { tokens };
       if (dryRun !== undefined) params.dryRun = dryRun;
       if (collectionName !== undefined) params.collectionName = collectionName;
       if (collectionStrategy !== undefined) params.collectionStrategy = collectionStrategy;
       if (modeStrategy !== undefined) params.modeStrategy = modeStrategy;
       if (conflictStrategy !== undefined) params.conflictStrategy = conflictStrategy;
-      return renderResponse(() => node.sendWithParams("create_design_tokens", undefined, params));
+      return renderResponse(() => node.sendWithParams("create_design_tokens", undefined, params, fileKey));
     }
   );
 
@@ -215,13 +233,13 @@ export function registerTools(server: McpServer, node: Node): void {
     "apply_tokens",
     "Apply existing Figma design tokens to matching node properties. Defaults to dry-run preview; actual binding/style application requires dryRun=false.",
     toolInputSchemas.apply_tokens.shape,
-    async ({ nodeIds, tokenPaths, matchTypes, dryRun, failureMode }): Promise<ToolResult> => {
+    async ({ nodeIds, tokenPaths, matchTypes, dryRun, failureMode, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (tokenPaths !== undefined) params.tokenPaths = tokenPaths;
       if (matchTypes !== undefined) params.matchTypes = matchTypes;
       if (dryRun !== undefined) params.dryRun = dryRun;
       if (failureMode !== undefined) params.failureMode = failureMode;
-      return renderResponse(() => node.sendWithParams("apply_tokens", nodeIds, params));
+      return renderResponse(() => node.sendWithParams("apply_tokens", nodeIds, params, fileKey));
     }
   );
 
@@ -229,12 +247,12 @@ export function registerTools(server: McpServer, node: Node): void {
     "get_screenshot",
     "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
-    async ({ nodeIds, format, scale }): Promise<ToolResult> => {
+    async ({ nodeIds, format, scale, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
       if (format) params.format = format;
       if (scale !== undefined && scale > 0) params.scale = scale;
       return renderResponse(() =>
-        node.sendWithParams("get_screenshot", nodeIds, params)
+        node.sendWithParams("get_screenshot", nodeIds, params, fileKey)
       );
     }
   );
@@ -243,9 +261,13 @@ export function registerTools(server: McpServer, node: Node): void {
     "save_screenshots",
     "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64).",
     toolInputSchemas.save_screenshots.shape,
-    async ({ items, format, scale }): Promise<ToolResult> => {
+    async ({ items, format, scale, fileKey }): Promise<ToolResult> => {
       try {
-        const result = await executeSaveScreenshots(node, items, format, scale);
+        const sender: ScreenshotSender = {
+          sendWithParams: (requestType, nodeIds, params) =>
+            node.sendWithParams(requestType, nodeIds, params, fileKey),
+        };
+        const result = await executeSaveScreenshots(sender, items, format, scale);
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
@@ -268,7 +290,8 @@ export function registerTools(server: McpServer, node: Node): void {
     name: N,
     description: string,
     handler: (
-      args: z.infer<(typeof toolInputSchemas)[N]>
+      args: Omit<z.infer<(typeof toolInputSchemas)[N]>, "fileKey">,
+      fileKey?: string
     ) => Promise<BridgeResponse>
   ): void => {
     server.tool(
@@ -276,88 +299,89 @@ export function registerTools(server: McpServer, node: Node): void {
       description,
       toolInputSchemas[name].shape,
       async (args: z.infer<(typeof toolInputSchemas)[N]>): Promise<ToolResult> => {
+        const { fileKey, ...params } = args as z.infer<(typeof toolInputSchemas)[N]> & { fileKey?: string };
         return renderResponse(() =>
-          handler(args)
+          handler(params as Omit<z.infer<(typeof toolInputSchemas)[N]>, "fileKey">, fileKey)
         );
       }
     );
   };
 
-  registerWriteTool("create_frame", "Create a frame.", (args) =>
-    node.sendWithParams("create_frame", undefined, args)
+  registerWriteTool("create_frame", "Create a frame.", (args, fileKey) =>
+    node.sendWithParams("create_frame", undefined, args, fileKey)
   );
-  registerWriteTool("create_text", "Create a text node.", (args) =>
-    node.sendWithParams("create_text", undefined, args)
+  registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
+    node.sendWithParams("create_text", undefined, args, fileKey)
   );
-  registerWriteTool("create_rectangle", "Create a rectangle.", (args) =>
-    node.sendWithParams("create_rectangle", undefined, args)
+  registerWriteTool("create_rectangle", "Create a rectangle.", (args, fileKey) =>
+    node.sendWithParams("create_rectangle", undefined, args, fileKey)
   );
-  registerWriteTool("append_children", "Append existing child nodes to a parent.", (args) =>
-    node.sendWithParams("append_children", undefined, args)
+  registerWriteTool("append_children", "Append existing child nodes to a parent.", (args, fileKey) =>
+    node.sendWithParams("append_children", undefined, args, fileKey)
   );
-  registerWriteTool("find_nodes", "Find nodes on the current page.", (args) =>
-    node.sendWithParams("find_nodes", undefined, args)
+  registerWriteTool("find_nodes", "Find nodes on the current page.", (args, fileKey) =>
+    node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
-  registerWriteTool("batch_mutation", "Execute write operations in order.", (args) =>
-    node.sendWithParams("batch_mutation", undefined, args)
+  registerWriteTool("batch_mutation", "Execute write operations in order.", (args, fileKey) =>
+    node.sendWithParams("batch_mutation", undefined, args, fileKey)
   );
 
-  registerWriteTool("set_position", "Set node position.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_position", [String(nodeId)], args)
+  registerWriteTool("set_position", "Set node position.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_position", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("set_size", "Set node size.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_size", [String(nodeId)], args)
+  registerWriteTool("set_size", "Set node size.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_size", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("set_fills", "Set node fills.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_fills", [String(nodeId)], args)
+  registerWriteTool("set_fills", "Set node fills.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_fills", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("set_strokes", "Set node strokes.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_strokes", [String(nodeId)], args)
+  registerWriteTool("set_strokes", "Set node strokes.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_strokes", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "set_corner_radius",
     "Set uniform corner radius.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("set_corner_radius", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("set_corner_radius", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "set_text_content",
     "Set text content.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("set_text_content", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("set_text_content", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("set_text_style", "Set text style.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_text_style", [String(nodeId)], args)
+  registerWriteTool("set_text_style", "Set text style.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_text_style", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "set_layout_mode",
     "Set auto-layout mode.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("set_layout_mode", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("set_layout_mode", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("set_padding", "Set auto-layout padding.", ({ nodeId, ...args }) =>
-    node.sendWithParams("set_padding", [String(nodeId)], args)
+  registerWriteTool("set_padding", "Set auto-layout padding.", ({ nodeId, ...args }, fileKey) =>
+    node.sendWithParams("set_padding", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "set_item_spacing",
     "Set auto-layout item spacing.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("set_item_spacing", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("set_item_spacing", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "set_node_name",
     "Rename an existing Figma node.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("set_node_name", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("set_node_name", [String(nodeId)], args, fileKey)
   );
   registerWriteTool(
     "rename_node",
     "Alias for set_node_name. Rename an existing Figma node.",
-    ({ nodeId, ...args }) =>
-      node.sendWithParams("rename_node", [String(nodeId)], args)
+    ({ nodeId, ...args }, fileKey) =>
+      node.sendWithParams("rename_node", [String(nodeId)], args, fileKey)
   );
-  registerWriteTool("delete_node", "Delete a node.", ({ nodeId }) =>
-    node.sendWithParams("delete_node", [String(nodeId)])
+  registerWriteTool("delete_node", "Delete a node.", ({ nodeId }, fileKey) =>
+    node.sendWithParams("delete_node", [String(nodeId)], undefined, fileKey)
   );
 }
 
