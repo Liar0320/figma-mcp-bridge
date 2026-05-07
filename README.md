@@ -62,6 +62,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 
 | Tool | Description |
 |------|-------------|
+| `list_files` | List Figma files currently connected to the bridge; use the returned `fileKey` to target a specific file |
 | `get_document` | Get the current Figma page document tree |
 | `get_selection` | Get the currently selected nodes in Figma |
 | `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`) |
@@ -100,6 +101,8 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 
 Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate.
 
+All Figma-backed tools accept an optional `fileKey`. When exactly one plugin instance is connected, tools remain backward compatible and can omit `fileKey`. When multiple Figma files/plugin instances are connected, tool calls fail closed unless the caller supplies a `fileKey`; call `list_files` first and pass the desired file's `fileKey` to read, screenshot, token, and write tools. Unsaved Figma files use a plugin-session fallback key so simultaneous `Untitled` files are still distinguishable.
+
 Within `batch_mutation`, temporary references must use the `tmp:` prefix, for example `ref: "tmp:modal"` and `nodeId: "tmp:modal"`. Bare labels like `"modal"` are treated as literal node IDs and are not resolved as batch refs.
 
 ## Design Tokens
@@ -122,6 +125,7 @@ Use [ENGINEERING_REVIEW_GUIDELINES.md](./ENGINEERING_REVIEW_GUIDELINES.md) as th
 
 - [docs/design-token-tools.md](./docs/design-token-tools.md): token graph, usage, audit, proposal, dry-run write, and export workflows.
 - [docs/development-workflow.md](./docs/development-workflow.md): local server/plugin setup, validation commands, Figma plugin import, and common troubleshooting.
+- [docs/multi-file-routing.md](./docs/multi-file-routing.md): multi-file/plugin-instance routing behavior, `list_files`, `fileKey`, and live verification checklist.
 - [skills/README.md](./skills/README.md): repo-local agent skills that capture practical MCP tool-selection, safety, screenshot, write, token, and debug workflows.
 
 ## Local development
@@ -168,10 +172,12 @@ For local development, add the following to your AI tool's MCP config:
 Before opening a PR, run the targeted local checks from the repository root:
 
 ```bash
-cd server && npm run build
+cd server && npm test
 cd ../plugin && npm run build
 npm test
 ```
+
+`server` tests compile the MCP server and verify multi-file routing/fail-closed behavior plus `fileKey` schema coverage.
 
 `plugin` tests compile the plugin test build and run write plus design-token coverage: write operations, token graph, usage mapping, audit, proposal, create, apply, and export.
 

@@ -96,11 +96,19 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_screenshot",
 ]);
 
+const pluginSessionId = `session-${Date.now().toString(36)}-${Math.random()
+  .toString(36)
+  .slice(2, 8)}`;
+
+const getConnectionFileKey = (): string =>
+  (figma as { fileKey?: string }).fileKey || pluginSessionId;
+
 /** Sends lightweight document status to the plugin UI after selection changes. */
 const sendStatus = () => {
   figma.ui.postMessage({
     type: "plugin-status",
     payload: {
+      fileKey: getConnectionFileKey(),
       fileName: figma.root.name,
       selectionCount: figma.currentPage.selection.length,
     },
