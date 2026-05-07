@@ -88,6 +88,8 @@ const nodeName = z
 
 export const batchOperationType = z.enum([
   "create_frame",
+  "create_component",
+  "create_instance",
   "create_text",
   "create_rectangle",
   "append_children",
@@ -320,6 +322,23 @@ export const toolInputSchemas = {
     itemSpacing: z.number().optional(),
     padding: paddingSchema.optional(),
   }),
+  create_component: createNodeBase.extend({
+    fileKey: fileKeyField,
+    fills: z.array(solidPaint).optional(),
+    strokes: z.array(solidPaint).optional(),
+    cornerRadius: z.number().nonnegative().optional(),
+    layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+    itemSpacing: z.number().optional(),
+    padding: paddingSchema.optional(),
+  }),
+  create_instance: withFileKey({
+    componentId: figmaNodeId,
+    parentId: figmaNodeId.optional(),
+    name: z.string().min(1).optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    key: z.string().min(1).optional(),
+  }),
   create_text: createNodeBase.extend({
     fileKey: fileKeyField,
     characters: z.string().optional(),
@@ -431,6 +450,8 @@ const rpcToArgs: Record<
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
+  create_component: (_nodeIds, params) => ({ ...params }),
+  create_instance: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_rectangle: (_nodeIds, params) => ({ ...params }),
   append_children: (_nodeIds, params) => ({ ...params }),

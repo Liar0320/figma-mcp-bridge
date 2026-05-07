@@ -25,6 +25,8 @@ type RequestType =
   | "export_design_tokens"
   | "get_screenshot"
   | "create_frame"
+  | "create_component"
+  | "create_instance"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -501,6 +503,8 @@ const handleRequest = async (
         };
       }
       case "create_frame":
+      case "create_component":
+      case "create_instance":
       case "create_text":
       case "create_rectangle":
       case "append_children":

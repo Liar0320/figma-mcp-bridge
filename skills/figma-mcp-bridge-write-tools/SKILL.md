@@ -9,7 +9,8 @@ Use this skill when a task may modify the current Figma file.
 
 ## What this skill covers
 
-- Create frames, text, and rectangles.
+- Create frames, text, rectangles, and first-class Figma Components.
+- Create Instances from local Components via `componentId` (remote `componentKey` import, variants, and Component Sets are out of scope).
 - Append existing nodes to a parent.
 - Find nodes by name, key, parent, or ID.
 - Set position, size, fills, strokes, radius, text content, text style, layout mode, padding, item spacing, and node name.

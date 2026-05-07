@@ -120,6 +120,46 @@ function createMockFigma() {
       })
     );
 
+  /** Creates a mock component node with child-container and instance behavior. */
+  const createComponent = () => {
+    const component = attach(
+      Object.assign(createBaseNode(createNodeId(), "COMPONENT", "Component"), {
+        type: "COMPONENT",
+        children: [],
+        layoutMode: "NONE",
+        layoutWrap: "NO_WRAP",
+        itemSpacing: 0,
+        primaryAxisAlignItems: "MIN",
+        counterAxisAlignItems: "MIN",
+        primaryAxisSizingMode: "AUTO",
+        counterAxisSizingMode: "AUTO",
+        counterAxisSpacing: 0,
+        paddingTop: 0,
+        paddingRight: 0,
+        paddingBottom: 0,
+        paddingLeft: 0,
+        clipsContent: false,
+        appendChild(child) {
+          if (child.parent && "children" in child.parent) {
+            child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
+          }
+          child.parent = this;
+          this.children.push(child);
+          registry.set(child.id, child);
+        },
+        createInstance() {
+          return attach(
+            Object.assign(createBaseNode(createNodeId(), "INSTANCE", `${this.name} Instance`), {
+              type: "INSTANCE",
+              mainComponent: this,
+            })
+          );
+        },
+      })
+    );
+    return component;
+  };
+
   /** Creates a mock text node with the font APIs used by the write engine. */
   const createText = () =>
     attach(
@@ -144,6 +184,7 @@ function createMockFigma() {
   return {
     currentPage: page,
     createFrame,
+    createComponent,
     createRectangle,
     createText,
     async getNodeByIdAsync(nodeId) {
@@ -165,6 +206,116 @@ async function assertMutationError(promise, code, messagePattern) {
       return true;
     }
   );
+}
+
+
+/** Verifies create_component creates a first-class Figma Component with shared create fields. */
+async function testCreateComponentCreatesNamedComponent() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("create_component", undefined, {
+    name: "Button / Primary",
+    x: 24,
+    y: 32,
+    width: 160,
+    height: 48,
+    fills: [{ type: "SOLID", color: "#3366FF" }],
+    strokes: [{ type: "SOLID", color: "#003399" }],
+    cornerRadius: 12,
+    layoutMode: "HORIZONTAL",
+    itemSpacing: 8,
+    padding: { top: 10, right: 16, bottom: 10, left: 16 },
+  });
+
+  assert.equal(result.type, "COMPONENT");
+  assert.equal(result.name, "Button / Primary");
+  assert.equal(result.parentId, globalThis.figma.currentPage.id);
+
+  const component = await globalThis.figma.getNodeByIdAsync(result.nodeId);
+  assert.equal(component.type, "COMPONENT");
+  assert.equal(component.x, 24);
+  assert.equal(component.y, 32);
+  assert.equal(component.width, 160);
+  assert.equal(component.height, 48);
+  assert.equal(component.cornerRadius, 12);
+  assert.equal(component.layoutMode, "HORIZONTAL");
+  assert.equal(component.itemSpacing, 8);
+  assert.equal(component.paddingLeft, 16);
+}
+
+/** Verifies create_instance instantiates a local component and applies placement fields. */
+async function testCreateInstanceFromLocalComponent() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Button / Primary",
+  });
+  const result = await handleWriteRequest("create_instance", undefined, {
+    componentId: component.nodeId,
+    name: "CTA Button",
+    x: 200,
+    y: 80,
+  });
+
+  assert.equal(result.type, "INSTANCE");
+  assert.equal(result.name, "CTA Button");
+  assert.equal(result.parentId, globalThis.figma.currentPage.id);
+
+  const instance = await globalThis.figma.getNodeByIdAsync(result.nodeId);
+  assert.equal(instance.type, "INSTANCE");
+  assert.equal(instance.mainComponent.id, component.nodeId);
+  assert.equal(instance.x, 200);
+  assert.equal(instance.y, 80);
+}
+
+/** Verifies create_instance reports a clear NOT_FOUND error for missing components. */
+async function testCreateInstanceMissingComponentReportsNotFound() {
+  globalThis.figma = createMockFigma();
+
+  await assertMutationError(
+    handleWriteRequest("create_instance", undefined, { componentId: "1:404" }),
+    "NOT_FOUND",
+    /componentId was not found/
+  );
+}
+
+/** Verifies create_instance rejects non-component source nodes with a clear structured error. */
+async function testCreateInstanceRejectsNonComponentSource() {
+  globalThis.figma = createMockFigma();
+
+  const frame = await handleWriteRequest("create_frame", undefined, { name: "Not a Component" });
+
+  await assertMutationError(
+    handleWriteRequest("create_instance", undefined, { componentId: frame.nodeId }),
+    "INVALID_COMPONENT",
+    /componentId must reference a COMPONENT node/
+  );
+}
+
+/** Verifies batch_mutation can create a component and instantiate it via tmp: refs. */
+async function testBatchCreateComponentAndInstanceSupportsTmpRef() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    operations: [
+      {
+        type: "create_component",
+        ref: "tmp:button",
+        params: { name: "Button / Primary" },
+      },
+      {
+        type: "create_instance",
+        ref: "tmp:button-instance",
+        params: { componentId: "tmp:button", name: "Button Instance" },
+      },
+    ],
+  });
+
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.results[0].type, "COMPONENT");
+  assert.equal(result.results[1].type, "INSTANCE");
+  assert.ok(result.createdRefs["tmp:button"]);
+  assert.ok(result.createdRefs["tmp:button-instance"]);
 }
 
 /** Verifies set_node_name renames an existing node and returns the updated snapshot. */
@@ -542,6 +693,11 @@ async function runTests() {
     ["testRenameNodeAliasRenamesExistingNode", testRenameNodeAliasRenamesExistingNode],
     ["testSetNodeNameRejectsWhitespaceOnlyName", testSetNodeNameRejectsWhitespaceOnlyName],
     ["testSetNodeNameMissingNodeReportsNotFound", testSetNodeNameMissingNodeReportsNotFound],
+    ["testCreateComponentCreatesNamedComponent", testCreateComponentCreatesNamedComponent],
+    ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
+    ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
+    ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
+    ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
     ["testPartialFailure", testPartialFailure],
