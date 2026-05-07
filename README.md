@@ -82,6 +82,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `create_frame` | Create a frame on the current page |
 | `create_component` | Create a first-class Figma Component on the current page |
 | `create_instance` | Create an Instance from a local Component by `componentId` |
+| `combine_as_variants` | Combine two or more local Components into a native Figma Component Set / variants node |
 | `create_text` | Create a text node on the current page |
 | `create_rectangle` | Create a rectangle on the current page |
 | `append_children` | Re-parent existing child nodes under a parent |
@@ -101,7 +102,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `delete_node` | Delete a node |
 | `batch_mutation` | Execute up to 100 write operations in order, with temporary refs for multi-step generation |
 
-Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes and local `componentId` instances; remote library import by component key, variants, Component Sets, and component property authoring are out of scope for the first pass.
+Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes, creating local `componentId` instances, and combining two or more existing local Components into a native `COMPONENT_SET` via `combine_as_variants` (`componentIds`, optional `parentId`, `name`, `x`, `y`, `key`). Remote library import by component key and component property authoring remain out of scope for this pass.
 
 All Figma-backed tools accept an optional `fileKey`. When exactly one plugin instance is connected, tools remain backward compatible and can omit `fileKey`. When multiple Figma files/plugin instances are connected, tool calls fail closed unless the caller supplies a `fileKey`; call `list_files` first and pass the desired file's `fileKey` to read, screenshot, token, and write tools. Unsaved Figma files use a plugin-session fallback key so simultaneous `Untitled` files are still distinguishable.
 

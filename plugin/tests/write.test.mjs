@@ -120,33 +120,38 @@ function createMockFigma() {
       })
     );
 
+  /** Creates a mock child-container node with appendChild behavior. */
+  const withChildren = (node) =>
+    Object.assign(node, {
+      children: [],
+      layoutMode: "NONE",
+      layoutWrap: "NO_WRAP",
+      itemSpacing: 0,
+      primaryAxisAlignItems: "MIN",
+      counterAxisAlignItems: "MIN",
+      primaryAxisSizingMode: "AUTO",
+      counterAxisSizingMode: "AUTO",
+      counterAxisSpacing: 0,
+      paddingTop: 0,
+      paddingRight: 0,
+      paddingBottom: 0,
+      paddingLeft: 0,
+      clipsContent: false,
+      appendChild(child) {
+        if (child.parent && "children" in child.parent) {
+          child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
+        }
+        child.parent = this;
+        this.children.push(child);
+        registry.set(child.id, child);
+      },
+    });
+
   /** Creates a mock component node with child-container and instance behavior. */
   const createComponent = () => {
     const component = attach(
-      Object.assign(createBaseNode(createNodeId(), "COMPONENT", "Component"), {
+      Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT", "Component")), {
         type: "COMPONENT",
-        children: [],
-        layoutMode: "NONE",
-        layoutWrap: "NO_WRAP",
-        itemSpacing: 0,
-        primaryAxisAlignItems: "MIN",
-        counterAxisAlignItems: "MIN",
-        primaryAxisSizingMode: "AUTO",
-        counterAxisSizingMode: "AUTO",
-        counterAxisSpacing: 0,
-        paddingTop: 0,
-        paddingRight: 0,
-        paddingBottom: 0,
-        paddingLeft: 0,
-        clipsContent: false,
-        appendChild(child) {
-          if (child.parent && "children" in child.parent) {
-            child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
-          }
-          child.parent = this;
-          this.children.push(child);
-          registry.set(child.id, child);
-        },
         createInstance() {
           return attach(
             Object.assign(createBaseNode(createNodeId(), "INSTANCE", `${this.name} Instance`), {
@@ -158,6 +163,20 @@ function createMockFigma() {
       })
     );
     return component;
+  };
+
+  /** Combines local components into a mock Figma component set. */
+  const combineAsVariants = (components, parent) => {
+    const componentSet = attach(
+      Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT_SET", "Component Set")), {
+        type: "COMPONENT_SET",
+      })
+    );
+    parent.appendChild(componentSet);
+    for (const component of components) {
+      componentSet.appendChild(component);
+    }
+    return componentSet;
   };
 
   /** Creates a mock text node with the font APIs used by the write engine. */
@@ -185,6 +204,7 @@ function createMockFigma() {
     currentPage: page,
     createFrame,
     createComponent,
+    combineAsVariants,
     createRectangle,
     createText,
     async getNodeByIdAsync(nodeId) {
@@ -290,6 +310,126 @@ async function testCreateInstanceRejectsNonComponentSource() {
     "INVALID_COMPONENT",
     /componentId must reference a COMPONENT node/
   );
+}
+
+/** Verifies combine_as_variants creates a native component set from local components. */
+async function testCombineAsVariantsCreatesComponentSet() {
+  globalThis.figma = createMockFigma();
+
+  const defaultComponent = await handleWriteRequest("create_component", undefined, {
+    name: "Button / State=Default",
+  });
+  const hoverComponent = await handleWriteRequest("create_component", undefined, {
+    name: "Button / State=Hover",
+  });
+  const parent = await handleWriteRequest("create_frame", undefined, { name: "Library" });
+
+  const result = await handleWriteRequest("combine_as_variants", undefined, {
+    componentIds: [defaultComponent.nodeId, hoverComponent.nodeId],
+    parentId: parent.nodeId,
+    name: "Button",
+    x: 120,
+    y: 240,
+  });
+
+  assert.equal(result.type, "COMPONENT_SET");
+  assert.equal(result.name, "Button");
+  assert.equal(result.parentId, parent.nodeId);
+  assert.deepEqual(result.sourceComponentIds, [defaultComponent.nodeId, hoverComponent.nodeId]);
+
+  const componentSet = await globalThis.figma.getNodeByIdAsync(result.nodeId);
+  assert.equal(componentSet.type, "COMPONENT_SET");
+  assert.equal(componentSet.x, 120);
+  assert.equal(componentSet.y, 240);
+  assert.deepEqual(
+    componentSet.children.map((node) => node.id),
+    [defaultComponent.nodeId, hoverComponent.nodeId]
+  );
+}
+
+/** Verifies combine_as_variants rejects fewer than two components before mutation. */
+async function testCombineAsVariantsRequiresAtLeastTwoComponents() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Button / State=Default",
+  });
+
+  await assertMutationError(
+    handleWriteRequest("combine_as_variants", undefined, {
+      componentIds: [component.nodeId],
+    }),
+    "INVALID_INPUT",
+    /componentIds must include at least two component IDs/
+  );
+}
+
+/** Verifies combine_as_variants reports NOT_FOUND for missing component IDs. */
+async function testCombineAsVariantsMissingComponentReportsNotFound() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Button / State=Default",
+  });
+
+  await assertMutationError(
+    handleWriteRequest("combine_as_variants", undefined, {
+      componentIds: [component.nodeId, "1:404"],
+    }),
+    "NOT_FOUND",
+    /componentIds\[1\] was not found/
+  );
+}
+
+/** Verifies combine_as_variants rejects non-component source nodes. */
+async function testCombineAsVariantsRejectsNonComponentSource() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Button / State=Default",
+  });
+  const frame = await handleWriteRequest("create_frame", undefined, { name: "Not a Component" });
+
+  await assertMutationError(
+    handleWriteRequest("combine_as_variants", undefined, {
+      componentIds: [component.nodeId, frame.nodeId],
+    }),
+    "INVALID_COMPONENT",
+    /componentIds\[1\] must reference a COMPONENT node/
+  );
+}
+
+/** Verifies batch_mutation can combine components into variants via tmp: refs. */
+async function testBatchCombineAsVariantsSupportsTmpRefs() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    operations: [
+      {
+        type: "create_component",
+        ref: "tmp:default",
+        params: { name: "Button / State=Default" },
+      },
+      {
+        type: "create_component",
+        ref: "tmp:hover",
+        params: { name: "Button / State=Hover" },
+      },
+      {
+        type: "combine_as_variants",
+        ref: "tmp:button-set",
+        params: {
+          componentIds: ["tmp:default", "tmp:hover"],
+          name: "Button",
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.executedCount, 3);
+  assert.equal(result.results[2].type, "COMPONENT_SET");
+  assert.equal(result.results[2].name, "Button");
+  assert.ok(result.createdRefs["tmp:button-set"]);
 }
 
 /** Verifies batch_mutation can create a component and instantiate it via tmp: refs. */
@@ -697,6 +837,11 @@ async function runTests() {
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
+    ["testCombineAsVariantsCreatesComponentSet", testCombineAsVariantsCreatesComponentSet],
+    ["testCombineAsVariantsRequiresAtLeastTwoComponents", testCombineAsVariantsRequiresAtLeastTwoComponents],
+    ["testCombineAsVariantsMissingComponentReportsNotFound", testCombineAsVariantsMissingComponentReportsNotFound],
+    ["testCombineAsVariantsRejectsNonComponentSource", testCombineAsVariantsRejectsNonComponentSource],
+    ["testBatchCombineAsVariantsSupportsTmpRefs", testBatchCombineAsVariantsSupportsTmpRefs],
     ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
