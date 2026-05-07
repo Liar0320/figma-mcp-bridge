@@ -15,7 +15,7 @@
 - `figma-mcp-bridge-document-context`
   负责页面树、当前选区、指定节点、元数据和 design context 查询。
 - `figma-mcp-bridge-styles-and-variables`
-  负责本地 styles 和 variables/tokens 的读取与解释。
+  负责本地 styles、variables/tokens、normalized token graph、usage mapping、audit、proposal、create/apply dry-run 和 export 的选择与解释。
 - `figma-mcp-bridge-screenshot-export`
   负责 `get_screenshot` 与 `save_screenshots` 的选择、参数约束和落盘规则。
 - `figma-mcp-bridge-write-tools`
@@ -34,4 +34,4 @@
 
 - 在当前仓库中直接引用这些 `skills/*/SKILL.md` 即可。
 - 如果要迁移到别的 agent skills 目录，优先整体复制 `skills/`，不要只拷单个 `SKILL.md`，否则 references 会断。
-- 后续如果仓库新增更多导出格式或插件连接模式，先更新 `INTAKE_AUDIT.md`，再调整相关 skill，而不是直接往 `SKILL.md` 塞细节。
+- 后续如果仓库新增更多 token 工具、导出格式或插件连接模式，先更新 `INTAKE_AUDIT.md` 和相关 workflow docs，再调整相关 skill，而不是直接往 `SKILL.md` 塞细节。

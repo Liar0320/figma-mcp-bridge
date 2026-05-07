@@ -11,6 +11,13 @@
 | 看压缩后的局部设计结构 | `get_design_context` | 可传 `depth`，默认比 `get_document` 更适合 AI 理解 |
 | 看本地 paint/text/effect/grid styles | `get_styles` | 若要变量与 modes，另调 `get_variable_defs` |
 | 看变量集合、modes、alias、token 值 | `get_variable_defs` | 和 `get_styles` 互补，不替代 |
+| 看 normalized token graph | `get_design_tokens` | 比 `get_styles`/`get_variable_defs` 更适合 AI 统一理解设计系统 |
+| 看节点 token 使用和覆盖率 | `get_token_usage` | 扫 selection/page/nodeIds，区分 `boundVariable`/`style`/`exactValue`/`none` |
+| 做 token 治理审计 | `audit_design_tokens` | 只读，输出 coverage、issues 和 recommendations |
+| 生成 token 建议 | `propose_design_tokens` | 只读建议，不创建变量或绑定节点 |
+| 创建 token | `create_design_tokens` | 默认 dry-run；确认 plan 后才可显式 `dryRun=false` |
+| 应用 token 到节点 | `apply_tokens` | 默认 dry-run；确认 nodeIds/plan 后才可显式 `dryRun=false` |
+| 导出 token | `export_design_tokens` | 只读，支持 JSON/DTCG/CSS/Tailwind |
 | 要图像二进制结果 | `get_screenshot` | 返回 base64，不落盘 |
 | 要直接保存文件 | `save_screenshots` | 需要严格处理 `outputPath`、格式和覆盖规则 |
 | 创建 frame/text/rectangle | `create_frame` / `create_text` / `create_rectangle` | 多步创建用 `batch_mutation` + `tmp:` 引用 |
@@ -33,14 +40,20 @@
 
 #### 场景 3：读设计系统资产
 
-`get_styles` + `get_variable_defs`
+`get_styles` + `get_variable_defs` -> 需要统一 token 视图时再用 `get_design_tokens`。
 
-前者偏本地样式，后者偏变量集合和 modes，不要只调一个就声称“拿到了全部 token”。
+前者偏本地样式，后者偏变量集合和 modes；`get_design_tokens` 是归一化后的 graph，不要只调一个 raw source 就声称“拿到了全部 token”。
 
-#### 场景 4：导出图像
+#### 场景 4：token 治理
+
+`get_design_tokens` -> `get_token_usage` -> `audit_design_tokens` -> 可选 `propose_design_tokens`。
+
+如果用户要创建或应用 token，先运行 `create_design_tokens` / `apply_tokens` 的默认 dry-run，审查 plan 后才考虑 `dryRun=false`。如果用户要给代码侧消费 token，用 `export_design_tokens`。
+
+#### 场景 5：导出图像
 
 如果后续流程自己处理图片内容，用 `get_screenshot`。如果用户明确要本地文件，用 `save_screenshots`。
 
-#### 场景 5：写入节点
+#### 场景 6：写入节点
 
 先确认目标 `nodeId` 来源（`get_selection`、`find_nodes` 或已知 ID）。单个属性修改用对应 setter。多步操作（创建 + 修改 + 嵌套）用 `batch_mutation` + `tmp:` 引用。

@@ -5,6 +5,9 @@
 - [Demo](#demo)
 - [Quick Start](#quick-start)
 - [Available Tools](#available-tools)
+- [Design Tokens](#design-tokens)
+- [Engineering Review Guidelines](#engineering-review-guidelines)
+- [Development Docs](#development-docs)
 - [Local development](#local-development)
 - [Structure](#structure)
 - [How it works](#how-it-works)
@@ -19,7 +22,7 @@ While other amazing Figma MCP servers like [Figma-Context-MCP](https://github.co
 
 The limit for free accounts is 6 requests per month, yes **per month**.
 
-Figma MCP Bridge is a solution to this problem. It is a plugin + MCP server that streams live Figma document data to AI tools without hitting Figma API rate limits, so its Figma MCP for the rest of us ✊
+Figma MCP Bridge is a solution to this problem. It is a local Figma plugin + MCP server bridge that streams the currently open Figma file to AI/MCP clients over WebSocket, avoiding Figma REST API rate limits — Figma MCP for the rest of us ✊
 
 ## Demo
 
@@ -69,6 +72,10 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `get_design_tokens` | Get normalized design tokens from local variables and styles with AI-friendly paths, sources, modes, and summary counts |
 | `get_token_usage` | Scan selection, current page, or specific nodes and map node properties to tokens via bindings, styles, or exact value matches |
 | `audit_design_tokens` | Read-only audit of token coverage and consistency; returns issues and recommendations based on token graph + usage mapping |
+| `propose_design_tokens` | Read-only token proposal workflow based on repeated unbound values and duplicate token values |
+| `create_design_tokens` | Create local variables/styles from a reviewed token list; defaults to dry-run and only writes with `dryRun=false` |
+| `apply_tokens` | Bind variables or apply styles to matching node properties; defaults to dry-run and only writes with `dryRun=false` |
+| `export_design_tokens` | Export normalized tokens as JSON, DTCG JSON, CSS variables, or Tailwind theme tokens without modifying Figma |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
 | `create_frame` | Create a frame on the current page |
@@ -97,15 +104,25 @@ Within `batch_mutation`, temporary references must use the `tmp:` prefix, for ex
 
 ## Design Tokens
 
-Figma MCP Bridge exposes design-system data at two levels:
+Figma MCP Bridge exposes design-system data as a layered workflow:
 
-- `get_styles` returns raw local paint, text, effect, and grid styles.
-- `get_variable_defs` returns raw Figma variable collections, modes, values, and aliases.
-- `get_design_tokens` returns a normalized token graph that combines local variables and styles while preserving their `source` (`variable` or `style`). Use this when an AI tool needs an overview of the file's design tokens without parsing raw Figma internals.
-- `get_token_usage` returns a usage map for the current selection, current page, or explicit `nodeIds`. It reports node property usages for colors, typography, radius, spacing, effects, and grids, then classifies matches as `boundVariable`, `style`, `exactValue`, or `none`.
-- `audit_design_tokens` combines the normalized token graph with usage mapping and returns a read-only audit report: `summary`, `issues[]`, `recommendations[]`, and source summaries. It flags low coverage, unbound usages, exact-value-only matches, duplicate token values, unknown groups, empty scans, and unused tokens in the scanned scope.
+1. **Raw sources**: `get_styles` returns local paint, text, effect, and grid styles. `get_variable_defs` returns Figma variable collections, modes, values, and aliases.
+2. **Normalized graph**: `get_design_tokens` combines variables and styles into stable AI-friendly token paths such as `color.brand.primary`, while preserving each token's `source` (`variable` or `style`) and mode-aware values.
+3. **Usage and audit**: `get_token_usage` scans the current selection, current page, or explicit `nodeIds` and classifies matches as `boundVariable`, `style`, `exactValue`, or `none`. `audit_design_tokens` uses that usage map to report coverage, unbound usages, exact-value-only matches, duplicate values, unknown groups, empty scans, and unused tokens.
+4. **Proposal and export**: `propose_design_tokens` suggests token candidates without writing to Figma. `export_design_tokens` serializes the normalized token graph to JSON, DTCG JSON, CSS variables, or Tailwind theme tokens.
+5. **Dry-run-first writes**: `create_design_tokens` and `apply_tokens` preview their plans by default. They only modify the Figma file when callers explicitly pass `dryRun=false`.
 
-`get_design_tokens` normalizes Figma names such as `Brand/Primary` into stable token paths such as `color.brand.primary`, includes mode-aware variable values, and summarizes token counts by source and group. `get_token_usage` builds on that graph to show design-system coverage in actual nodes, including summary counts by token group and match type. `audit_design_tokens` is the next read-only layer for design-system governance: it does not create variables, bind nodes, rename layers, or otherwise modify the Figma file. Token proposal, creation, export, and application are intentionally separate workflows.
+Use the read-only graph, usage, audit, proposal, and export tools for design-system analysis. Treat `create_design_tokens` and `apply_tokens` as write workflows: review the dry-run plan first, then opt into real Figma changes only when the target collection, nodes, and conflict strategy are clear. See [docs/design-token-tools.md](./docs/design-token-tools.md) for the full token-tool matrix.
+
+## Engineering Review Guidelines
+
+Use [ENGINEERING_REVIEW_GUIDELINES.md](./ENGINEERING_REVIEW_GUIDELINES.md) as the team baseline for manual MCP tool development and code review. It defines module boundaries, tool categories, schema rules, write-operation safety boundaries, manual verification steps, PR checklist, issue severity levels, and design-token-specific constraints. It is a human engineering and review standard, not an AI-client usage guide.
+
+## Development Docs
+
+- [docs/design-token-tools.md](./docs/design-token-tools.md): token graph, usage, audit, proposal, dry-run write, and export workflows.
+- [docs/development-workflow.md](./docs/development-workflow.md): local server/plugin setup, validation commands, Figma plugin import, and common troubleshooting.
+- [skills/README.md](./skills/README.md): repo-local agent skills that capture practical MCP tool-selection, safety, screenshot, write, token, and debug workflows.
 
 ## Local development
 
@@ -127,6 +144,12 @@ cd server && npm install && npm run build
 cd plugin && bun install && bun run build
 ```
 
+If `bun` is not available, the plugin can also be built with npm:
+
+```bash
+cd plugin && npm install && npm run build
+```
+
 #### 4. Add the MCP server to your favourite AI tool
 
 For local development, add the following to your AI tool's MCP config:
@@ -139,6 +162,18 @@ For local development, add the following to your AI tool's MCP config:
   }
 }
 ```
+
+## Validation
+
+Before opening a PR, run the targeted local checks from the repository root:
+
+```bash
+cd server && npm run build
+cd ../plugin && npm run build
+npm test
+```
+
+`plugin` tests compile the plugin test build and run write plus design-token coverage: write operations, token graph, usage mapping, audit, proposal, create, apply, and export.
 
 ## Structure
 
