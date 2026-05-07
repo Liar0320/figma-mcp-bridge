@@ -8,6 +8,7 @@
 - [Design Tokens](#design-tokens)
 - [Engineering Review Guidelines](#engineering-review-guidelines)
 - [Development Docs](#development-docs)
+- [Contributing](#contributing)
 - [Local development](#local-development)
 - [Structure](#structure)
 - [How it works](#how-it-works)
@@ -129,6 +130,10 @@ Use [ENGINEERING_REVIEW_GUIDELINES.md](./ENGINEERING_REVIEW_GUIDELINES.md) as th
 - [docs/development-workflow.md](./docs/development-workflow.md): local server/plugin setup, validation commands, Figma plugin import, and common troubleshooting.
 - [docs/multi-file-routing.md](./docs/multi-file-routing.md): multi-file/plugin-instance routing behavior, `list_files`, `fileKey`, and live verification checklist.
 - [skills/README.md](./skills/README.md): repo-local agent skills that capture practical MCP tool-selection, safety, screenshot, write, token, and debug workflows.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for Conventional Commit scopes, release version semantics, and semantic-release dry-run instructions.
 
 ## Local development
 

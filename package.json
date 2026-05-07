@@ -1,0 +1,21 @@
+{
+  "name": "figma-mcp-bridge-release-tools",
+  "private": true,
+  "version": "0.0.0-development",
+  "description": "Release automation tooling for figma-mcp-bridge",
+  "type": "module",
+  "scripts": {
+    "release": "semantic-release",
+    "release:dry-run": "semantic-release --dry-run"
+  },
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/github": "^11.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.0",
+    "conventional-changelog-conventionalcommits": "^9.1.0",
+    "semantic-release": "^24.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
