@@ -1,38 +1,41 @@
-## Validation Checklist
+# Validation Checklist
 
-### 结构检查
+## Structure checks
 
-- [ ] 每个 skill 目录都有 `SKILL.md`
-- [ ] 每个 `SKILL.md` frontmatter 只有 `name` 和 `description`
-- [ ] 每个 skill 的引用文档路径都存在
-- [ ] `skills/README.md` 和实际目录结构一致
+- [ ] Every skill directory has a `SKILL.md` file.
+- [ ] Each `SKILL.md` frontmatter contains only the fields expected by the project convention.
+- [ ] Every referenced document path exists.
+- [ ] `skills/README.md` matches the actual directory structure.
 
-### 内容检查
+## Content checks
 
-- [ ] 主 skill 明确了默认调用顺序，而不是只列工具名
-- [ ] 文档上下文 skill 明确了何时用 `get_design_context`、何时用 `get_document`
-- [ ] 样式/变量 skill 明确区分 `get_styles` 与 `get_variable_defs`
-- [ ] 截图 skill 明确区分 `get_screenshot` 与 `save_screenshots`
-- [ ] debug skill 明确覆盖连接、参数、路径和导出冲突
+- [ ] The entry skill explains default call order instead of only listing tool names.
+- [ ] The document-context skill explains when to use `get_design_context` and when to use `get_document`.
+- [ ] The styles-and-variables skill clearly separates `get_styles`, `get_variable_defs`, and normalized token tools.
+- [ ] The screenshot skill clearly separates `get_screenshot` and `save_screenshots`.
+- [ ] The write-tools skill documents mutation boundaries and target verification.
+- [ ] The debug skill covers connection state, parameters, paths, and export conflicts.
+- [ ] All repository-facing prose is written in English.
 
-### 仓库检查
+## Repository checks
 
-- [ ] 未引入新依赖
-- [ ] 未改动 server/plugin 运行逻辑
-- [ ] `server` 构建通过
-- [ ] `plugin` 构建通过
+- [ ] No unnecessary dependency was introduced.
+- [ ] Server/plugin runtime behavior was not changed by documentation-only edits.
+- [ ] Server build passes when server code or schemas changed.
+- [ ] Plugin build passes when plugin code changed.
+- [ ] Plugin tests pass when plugin behavior changed.
 
-### 回测样例
+## Regression prompts
 
-1. “我只想知道当前页里在选中的节点长什么样，该用哪个工具？”
-2. “我已经有 nodeId 了，想看这个节点的详细结构和样式。”
-3. “我需要把当前文件的颜色 tokens 和变量 alias 都读出来。”
-4. “我要导出两个节点到本地文件夹，为什么 `outputPath` 报错？”
-5. “为什么 MCP 一直说插件没连上 / 请求超时？”
+1. I only want to inspect the currently selected node. Which tool should I use?
+2. I already have a node ID and want detailed structure and style information.
+3. I need to read this file's color tokens and variable aliases.
+4. I want to export two nodes to local files. Why is `outputPath` rejected?
+5. Why does MCP say the plugin is disconnected or the request timed out?
 
-### 完成标准
+## Completion standard
 
-- 这套 skill 能解释工具如何分工
-- 这套 skill 能阻止最常见的 `nodeId` / `outputPath` / 连接状态误用
-- 结构能迁移到别的 MCP 仓库
-- 内容不是 README 的改写版
+- The skill set explains how the tools are divided.
+- The skill set prevents common `nodeId`, `outputPath`, and connection-state mistakes.
+- The structure can be adapted to other MCP bridge repositories.
+- The content is operational guidance, not a duplicate of the README.
