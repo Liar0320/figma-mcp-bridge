@@ -53,6 +53,8 @@ interface SaveScreenshotItemResult {
 type WriteToolName = keyof Pick<
   typeof toolInputSchemas,
   | "create_frame"
+  | "create_component"
+  | "create_instance"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -309,6 +311,14 @@ export function registerTools(server: McpServer, node: Node): void {
 
   registerWriteTool("create_frame", "Create a frame.", (args, fileKey) =>
     node.sendWithParams("create_frame", undefined, args, fileKey)
+  );
+  registerWriteTool("create_component", "Create a Figma component.", (args, fileKey) =>
+    node.sendWithParams("create_component", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "create_instance",
+    "Create an instance from a local Figma component. componentId must reference a COMPONENT node on the current page.",
+    (args, fileKey) => node.sendWithParams("create_instance", undefined, args, fileKey)
   );
   registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
     node.sendWithParams("create_text", undefined, args, fileKey)

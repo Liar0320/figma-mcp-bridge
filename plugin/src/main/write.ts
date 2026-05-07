@@ -225,6 +225,7 @@ function validateWriteToolParams(
 
   switch (type) {
     case "create_frame":
+    case "create_component":
       if (params) validateCreateNodeBase(params);
       if (params?.fills !== undefined) toSolidPaints(params.fills);
       if (params?.strokes !== undefined) toSolidPaints(params.strokes);
@@ -236,6 +237,14 @@ function validateWriteToolParams(
       }
       if (params?.itemSpacing !== undefined) getNumber(params.itemSpacing, "itemSpacing");
       if (params?.padding !== undefined) validatePaddingObject(params.padding, "padding");
+      return;
+    case "create_instance":
+      getFigmaNodeId(params?.componentId, "componentId");
+      getOptionalFigmaNodeId(params?.parentId, "parentId");
+      getOptionalNonEmptyString(params?.name, "name");
+      if (params?.x !== undefined) getNumber(params.x, "x");
+      if (params?.y !== undefined) getNumber(params.y, "y");
+      getOptionalNonEmptyString(params?.key, "key");
       return;
     case "create_text":
       if (params) validateCreateNodeBase(params);
@@ -631,6 +640,51 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
   }
 }
 
+/** Creates a component on the current page and applies supported initial properties. */
+async function createComponent(params: RequestParams): Promise<MutationResult> {
+  const parent = await getParentNode(getOptionalString(params?.parentId));
+  const node = figma.createComponent();
+  try {
+    setName(node, params?.name, "Component");
+    applyPosition(node, params);
+    applySize(node, params);
+    applyFills(node, params?.fills);
+    applyStrokes(node, params?.strokes);
+    applyCornerRadius(node, params?.cornerRadius);
+    applyLayoutMode(node, params?.layoutMode);
+    applyPadding(node, params?.padding);
+    applyItemSpacing(node, params?.itemSpacing);
+    setPluginData(node, getOptionalString(params?.key));
+    parent.appendChild(node);
+    return toMutationResult(node);
+  } catch (error) {
+    node.remove();
+    throw error;
+  }
+}
+
+/** Creates an instance from a local component on the current page. */
+async function createInstance(params: RequestParams): Promise<MutationResult> {
+  const parent = await getParentNode(getOptionalString(params?.parentId));
+  const componentId = getString(params?.componentId, "componentId");
+  const source = await getNodeById(componentId, "componentId");
+  if (source.type !== "COMPONENT") {
+    fail("INVALID_COMPONENT", "componentId must reference a COMPONENT node");
+  }
+
+  const node = (source as ComponentNode).createInstance();
+  try {
+    setName(node, params?.name, `${source.name} Instance`);
+    applyPosition(node, params);
+    setPluginData(node, getOptionalString(params?.key));
+    parent.appendChild(node);
+    return toMutationResult(node);
+  } catch (error) {
+    node.remove();
+    throw error;
+  }
+}
+
 /** Creates a text node on the current page and applies content and style inputs. */
 async function createText(params: RequestParams): Promise<MutationResult> {
   const parent = await getParentNode(getOptionalString(params?.parentId));
@@ -765,6 +819,10 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
   switch (type) {
     case "create_frame":
       return createFrame(params);
+    case "create_component":
+      return createComponent(params);
+    case "create_instance":
+      return createInstance(params);
     case "create_text":
       return createText(params);
     case "create_rectangle":
