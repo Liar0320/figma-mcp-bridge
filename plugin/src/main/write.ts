@@ -201,6 +201,102 @@ function validatePaddingObject(value: unknown, field: string): void {
   if (value.left !== undefined) getNonnegativeNumber(value.left, `${field}.left`);
 }
 
+type ComponentPropertyPrimitive = string | boolean;
+
+function validateStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!isObject(value)) {
+    fail("INVALID_INPUT", `${field} must be an object`);
+  }
+  const result: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (key.trim().length === 0) {
+      fail("INVALID_INPUT", `${field} keys must not be empty`);
+    }
+    if (typeof raw !== "string" || raw.length === 0) {
+      fail("INVALID_INPUT", `${field}.${key} must be a non-empty string`);
+    }
+    result[key] = raw;
+  }
+  if (Object.keys(result).length === 0) {
+    fail("INVALID_INPUT", `${field} must include at least one property`);
+  }
+  return result;
+}
+
+function validateComponentPropertyValueMap(value: unknown, field: string): Record<string, ComponentPropertyPrimitive> {
+  if (!isObject(value)) {
+    fail("INVALID_INPUT", `${field} must be an object`);
+  }
+  const result: Record<string, ComponentPropertyPrimitive> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (key.trim().length === 0) {
+      fail("INVALID_INPUT", `${field} keys must not be empty`);
+    }
+    if (typeof raw !== "string" && typeof raw !== "boolean") {
+      fail("INVALID_INPUT", `${field}.${key} must be a string or boolean`);
+    }
+    result[key] = raw;
+  }
+  if (Object.keys(result).length === 0) {
+    fail("INVALID_INPUT", `${field} must include at least one property`);
+  }
+  return result;
+}
+
+function validateComponentPropertyOperations(value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    fail("INVALID_INPUT", "operations must be a non-empty array");
+  }
+  for (const [index, operation] of value.entries()) {
+    if (!isObject(operation)) {
+      fail("INVALID_INPUT", `operations[${index}] must be an object`);
+    }
+    validateEnum(operation.action, `operations[${index}].action`, ["add", "edit", "delete"]);
+    getOptionalNonEmptyString(operation.propertyName, `operations[${index}].propertyName`);
+    if (operation.action === "add") {
+      validateEnum(operation.propertyType, `operations[${index}].propertyType`, [
+        "BOOLEAN",
+        "TEXT",
+        "INSTANCE_SWAP",
+        "VARIANT",
+      ]);
+      if (typeof operation.defaultValue !== "string" && typeof operation.defaultValue !== "boolean") {
+        fail("INVALID_INPUT", `operations[${index}].defaultValue must be a string or boolean`);
+      }
+    }
+    if (operation.action === "edit") {
+      if (operation.newName !== undefined) {
+        getOptionalNonEmptyString(operation.newName, `operations[${index}].newName`);
+      }
+      if (
+        operation.defaultValue !== undefined &&
+        typeof operation.defaultValue !== "string" &&
+        typeof operation.defaultValue !== "boolean"
+      ) {
+        fail("INVALID_INPUT", `operations[${index}].defaultValue must be a string or boolean`);
+      }
+    }
+    if (operation.preferredValues !== undefined) {
+      if (!Array.isArray(operation.preferredValues)) {
+        fail("INVALID_INPUT", `operations[${index}].preferredValues must be an array`);
+      }
+      for (const [valueIndex, preferredValue] of operation.preferredValues.entries()) {
+        if (!isObject(preferredValue)) {
+          fail("INVALID_INPUT", `operations[${index}].preferredValues[${valueIndex}] must be an object`);
+        }
+        validateEnum(preferredValue.type, `operations[${index}].preferredValues[${valueIndex}].type`, [
+          "COMPONENT",
+          "COMPONENT_SET",
+        ]);
+        getOptionalNonEmptyString(
+          preferredValue.key,
+          `operations[${index}].preferredValues[${valueIndex}].key`
+        );
+      }
+    }
+  }
+}
+
 /** Validates the shared create-node base params shape. */
 function validateCreateNodeBase(params: Record<string, unknown>): void {
   getOptionalFigmaNodeId(params.parentId, "parentId");
@@ -258,6 +354,27 @@ function validateWriteToolParams(
       if (params?.x !== undefined) getNumber(params.x, "x");
       if (params?.y !== undefined) getNumber(params.y, "y");
       getOptionalNonEmptyString(params?.key, "key");
+      return;
+    case "set_variant_properties":
+      getFigmaNodeId(params?.componentId, "componentId");
+      validateStringRecord(params?.variantProperties, "variantProperties");
+      if (params?.replace !== undefined && typeof params.replace !== "boolean") {
+        fail("INVALID_INPUT", "replace must be a boolean");
+      }
+      return;
+    case "manage_component_properties":
+      getFigmaNodeId(params?.componentId, "componentId");
+      validateComponentPropertyOperations(params?.operations);
+      return;
+    case "set_component_properties":
+      getFigmaNodeId(params?.instanceId, "instanceId");
+      validateComponentPropertyValueMap(params?.properties, "properties");
+      return;
+    case "set_exposed_instance":
+      getFigmaNodeId(params?.instanceId, "instanceId");
+      if (typeof params?.isExposed !== "boolean") {
+        fail("INVALID_INPUT", "isExposed must be a boolean");
+      }
       return;
     case "create_text":
       if (params) validateCreateNodeBase(params);
@@ -732,6 +849,125 @@ async function combineAsVariants(
   }
 }
 
+function variantNameFromProperties(properties: Record<string, string>): string {
+  return Object.entries(properties)
+    .map(([property, value]) => `${property}=${value}`)
+    .join(", ");
+}
+
+/** Updates a component variant by renaming it to Figma's Property=Value syntax. */
+async function setVariantProperties(
+  params: RequestParams
+): Promise<MutationResult & { variantProperties: Record<string, string> }> {
+  const component = await getNodeById(getString(params?.componentId, "componentId"), "componentId");
+  if (component.type !== "COMPONENT") {
+    fail("INVALID_COMPONENT", "componentId must reference a COMPONENT node");
+  }
+  if (!component.parent || component.parent.type !== "COMPONENT_SET") {
+    fail("INVALID_COMPONENT", "componentId must reference a variant COMPONENT inside a COMPONENT_SET");
+  }
+
+  const requested = validateStringRecord(params?.variantProperties, "variantProperties");
+  const current = isObject((component as ComponentNode).variantProperties)
+    ? { ...((component as ComponentNode).variantProperties as Record<string, string>) }
+    : {};
+  const next = params?.replace === true ? requested : { ...current, ...requested };
+  component.name = variantNameFromProperties(next);
+
+  return {
+    ...toMutationResult(component),
+    variantProperties: next,
+  };
+}
+
+type ComponentPropertyOwner = (ComponentNode | ComponentSetNode) & ComponentPropertiesMixin;
+
+async function getComponentPropertyOwner(componentId: unknown): Promise<ComponentPropertyOwner> {
+  const node = await getNodeById(getString(componentId, "componentId"), "componentId");
+  if (node.type !== "COMPONENT" && node.type !== "COMPONENT_SET") {
+    fail("INVALID_COMPONENT", "componentId must reference a COMPONENT or COMPONENT_SET node");
+  }
+  return node as ComponentPropertyOwner;
+}
+
+/** Adds, edits, or deletes component property definitions on components/component sets. */
+async function manageComponentProperties(params: RequestParams): Promise<MutationResult & { operations: unknown[] }> {
+  const owner = await getComponentPropertyOwner(params?.componentId);
+  validateComponentPropertyOperations(params?.operations);
+  const operations = params?.operations as Array<Record<string, unknown>>;
+  const results: unknown[] = [];
+
+  for (const operation of operations) {
+    const action = getString(operation.action, "action");
+    const propertyName = getString(operation.propertyName, "propertyName");
+    if (action === "add") {
+      const propertyType = getString(operation.propertyType, "propertyType") as ComponentPropertyType;
+      const defaultValue = operation.defaultValue as ComponentPropertyPrimitive;
+      const returnedName = owner.addComponentProperty(
+        propertyName,
+        propertyType,
+        defaultValue,
+        operation.preferredValues === undefined
+          ? undefined
+          : { preferredValues: operation.preferredValues as InstanceSwapPreferredValue[] }
+      );
+      results.push({ action, propertyName, returnedName });
+      continue;
+    }
+    if (action === "edit") {
+      const next: {
+        name?: string;
+        defaultValue?: string | boolean;
+        preferredValues?: InstanceSwapPreferredValue[];
+      } = {};
+      if (typeof operation.newName === "string") next.name = operation.newName;
+      if (typeof operation.defaultValue === "string" || typeof operation.defaultValue === "boolean") {
+        next.defaultValue = operation.defaultValue;
+      }
+      if (operation.preferredValues !== undefined) {
+        next.preferredValues = operation.preferredValues as InstanceSwapPreferredValue[];
+      }
+      const returnedName = owner.editComponentProperty(propertyName, next);
+      results.push({ action, propertyName, returnedName });
+      continue;
+    }
+    owner.deleteComponentProperty(propertyName);
+    results.push({ action, propertyName });
+  }
+
+  return {
+    ...toMutationResult(owner),
+    operations: results,
+  };
+}
+
+/** Sets variant/component property values on an instance. */
+async function setComponentProperties(params: RequestParams): Promise<MutationResult & { componentProperties: Record<string, ComponentPropertyPrimitive> }> {
+  const node = await getNodeById(getString(params?.instanceId, "instanceId"), "instanceId");
+  if (node.type !== "INSTANCE") {
+    fail("INVALID_INSTANCE", "instanceId must reference an INSTANCE node");
+  }
+  const properties = validateComponentPropertyValueMap(params?.properties, "properties");
+  (node as InstanceNode).setProperties(properties);
+  return {
+    ...toMutationResult(node),
+    componentProperties: properties,
+  };
+}
+
+/** Toggles whether a nested instance is exposed to the containing component/component set. */
+async function setExposedInstance(params: RequestParams): Promise<MutationResult & { isExposedInstance: boolean }> {
+  const node = await getNodeById(getString(params?.instanceId, "instanceId"), "instanceId");
+  if (node.type !== "INSTANCE") {
+    fail("INVALID_INSTANCE", "instanceId must reference an INSTANCE node");
+  }
+  (node as InstanceNode).isExposedInstance = params?.isExposed === true;
+  return {
+    ...toMutationResult(node),
+    isExposedInstance: (node as InstanceNode).isExposedInstance,
+  };
+}
+
 /** Creates a text node on the current page and applies content and style inputs. */
 async function createText(params: RequestParams): Promise<MutationResult> {
   const parent = await getParentNode(getOptionalString(params?.parentId));
@@ -872,6 +1108,14 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return createInstance(params);
     case "combine_as_variants":
       return combineAsVariants(params);
+    case "set_variant_properties":
+      return setVariantProperties(params);
+    case "manage_component_properties":
+      return manageComponentProperties(params);
+    case "set_component_properties":
+      return setComponentProperties(params);
+    case "set_exposed_instance":
+      return setExposedInstance(params);
     case "create_text":
       return createText(params);
     case "create_rectangle":

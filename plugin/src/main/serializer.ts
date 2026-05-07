@@ -99,6 +99,12 @@ type SerializedNode = {
   bounds?: SerializedBounds;
   characters?: string;
   styles?: SerializedStyles;
+  variantProperties?: Record<string, string> | null;
+  variantGroupProperties?: Record<string, { values: string[] }>;
+  componentPropertyDefinitions?: ComponentPropertyDefinitions;
+  componentProperties?: ComponentProperties;
+  exposedInstanceIds?: string[];
+  isExposedInstance?: boolean;
   children?: SerializedNode[];
   childCount?: number;
 };
@@ -366,14 +372,48 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   return styles;
 };
 
+const serializeComponentMetadata = (node: SceneNode, base: SerializedNode): SerializedNode => {
+  const enriched = { ...base };
+
+  if ("variantProperties" in node) {
+    enriched.variantProperties = node.variantProperties
+      ? { ...(node.variantProperties as Record<string, string>) }
+      : null;
+  }
+  if ("variantGroupProperties" in node) {
+    enriched.variantGroupProperties = Object.fromEntries(
+      Object.entries(node.variantGroupProperties).map(([property, group]) => [
+        property,
+        { values: [...group.values] },
+      ])
+    );
+  }
+  if ("componentPropertyDefinitions" in node) {
+    enriched.componentPropertyDefinitions = {
+      ...(node.componentPropertyDefinitions as ComponentPropertyDefinitions),
+    };
+  }
+  if ("componentProperties" in node) {
+    enriched.componentProperties = { ...(node.componentProperties as ComponentProperties) };
+  }
+  if ("exposedInstances" in node) {
+    enriched.exposedInstanceIds = node.exposedInstances.map((instance) => instance.id);
+  }
+  if ("isExposedInstance" in node) {
+    enriched.isExposedInstance = node.isExposedInstance;
+  }
+
+  return enriched;
+};
+
 export const serializeNode = (node: SceneNode): SerializedNode => {
-  const base: SerializedNode = {
+  const base = serializeComponentMetadata(node, {
     id: node.id,
     name: node.name,
     type: node.type,
     bounds: getBounds(node),
     styles: serializeStyles(node),
-  };
+  });
 
   if (node.type === "TEXT") {
     return serializeText(node, base);

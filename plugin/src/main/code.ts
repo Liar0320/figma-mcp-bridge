@@ -28,6 +28,10 @@ type RequestType =
   | "create_component"
   | "create_instance"
   | "combine_as_variants"
+  | "set_variant_properties"
+  | "manage_component_properties"
+  | "set_component_properties"
+  | "set_exposed_instance"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -507,6 +511,10 @@ const handleRequest = async (
       case "create_component":
       case "create_instance":
       case "combine_as_variants":
+      case "set_variant_properties":
+      case "manage_component_properties":
+      case "set_component_properties":
+      case "set_exposed_instance":
       case "create_text":
       case "create_rectangle":
       case "append_children":

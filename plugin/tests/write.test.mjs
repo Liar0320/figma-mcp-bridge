@@ -147,20 +147,86 @@ function createMockFigma() {
       },
     });
 
+  /** Adds component property definition APIs to component/component-set mocks. */
+  const withComponentPropertyDefinitions = (node) =>
+    Object.assign(node, {
+      componentPropertyDefinitions: {},
+      addComponentProperty(propertyName, type, defaultValue, options) {
+        const returnedName = type === "VARIANT" ? propertyName : `${propertyName}#${createNodeId()}`;
+        this.componentPropertyDefinitions[returnedName] = {
+          type,
+          defaultValue,
+          ...(type === "VARIANT" ? { variantOptions: [String(defaultValue)] } : {}),
+          ...(options?.preferredValues ? { preferredValues: options.preferredValues } : {}),
+        };
+        return returnedName;
+      },
+      editComponentProperty(propertyName, next) {
+        const current = this.componentPropertyDefinitions[propertyName];
+        if (!current) throw new Error(`Unknown component property: ${propertyName}`);
+        let returnedName = propertyName;
+        if (next.name && next.name !== propertyName) {
+          returnedName = current.type === "VARIANT" ? next.name : `${next.name}#${createNodeId()}`;
+          delete this.componentPropertyDefinitions[propertyName];
+        }
+        this.componentPropertyDefinitions[returnedName] = {
+          ...current,
+          ...(next.defaultValue !== undefined ? { defaultValue: next.defaultValue } : {}),
+          ...(next.preferredValues !== undefined ? { preferredValues: next.preferredValues } : {}),
+        };
+        return returnedName;
+      },
+      deleteComponentProperty(propertyName) {
+        if (!this.componentPropertyDefinitions[propertyName]) {
+          throw new Error(`Unknown component property: ${propertyName}`);
+        }
+        delete this.componentPropertyDefinitions[propertyName];
+      },
+    });
+
+  const parseVariantName = (name) =>
+    Object.fromEntries(
+      name
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => part.split("=").map((value) => value.trim()))
+        .filter(([property, value]) => property && value)
+    );
+
   /** Creates a mock component node with child-container and instance behavior. */
   const createComponent = () => {
     const component = attach(
-      Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT", "Component")), {
-        type: "COMPONENT",
-        createInstance() {
-          return attach(
-            Object.assign(createBaseNode(createNodeId(), "INSTANCE", `${this.name} Instance`), {
-              type: "INSTANCE",
-              mainComponent: this,
-            })
-          );
-        },
-      })
+      withComponentPropertyDefinitions(
+        Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT", "Component")), {
+          type: "COMPONENT",
+          variantProperties: null,
+          createInstance() {
+            return attach(
+              Object.assign(createBaseNode(createNodeId(), "INSTANCE", `${this.name} Instance`), {
+                type: "INSTANCE",
+                mainComponent: this,
+                variantProperties: this.variantProperties,
+                componentProperties: {},
+                exposedInstances: [],
+                isExposedInstance: false,
+                setProperties(properties) {
+                  for (const [propertyName, value] of Object.entries(properties)) {
+                    this.componentProperties[propertyName] = {
+                      type: typeof value === "boolean" ? "BOOLEAN" : "TEXT",
+                      value,
+                    };
+                    if (this.variantProperties && propertyName in this.variantProperties) {
+                      this.variantProperties = { ...this.variantProperties, [propertyName]: String(value) };
+                      this.componentProperties[propertyName].type = "VARIANT";
+                    }
+                  }
+                },
+              })
+            );
+          },
+        })
+      )
     );
     return component;
   };
@@ -168,12 +234,27 @@ function createMockFigma() {
   /** Combines local components into a mock Figma component set. */
   const combineAsVariants = (components, parent) => {
     const componentSet = attach(
-      Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT_SET", "Component Set")), {
-        type: "COMPONENT_SET",
-      })
+      withComponentPropertyDefinitions(
+        Object.assign(withChildren(createBaseNode(createNodeId(), "COMPONENT_SET", "Component Set")), {
+          type: "COMPONENT_SET",
+          variantGroupProperties: {},
+          exposedInstances: [],
+        })
+      )
     );
     parent.appendChild(componentSet);
     for (const component of components) {
+      component.variantProperties = parseVariantName(component.name);
+      for (const [property, value] of Object.entries(component.variantProperties)) {
+        const group = componentSet.variantGroupProperties[property] ?? { values: [] };
+        if (!group.values.includes(value)) group.values.push(value);
+        componentSet.variantGroupProperties[property] = group;
+        componentSet.componentPropertyDefinitions[property] = {
+          type: "VARIANT",
+          defaultValue: group.values[0],
+          variantOptions: group.values,
+        };
+      }
       componentSet.appendChild(component);
     }
     return componentSet;
@@ -826,6 +907,120 @@ async function testBatchSetStrokesSupportsTmpRef() {
   assert.equal(modal.strokes[0].type, "SOLID");
 }
 
+
+/** Verifies variant properties can be merged onto a component inside a component set. */
+async function testSetVariantPropertiesRenamesVariantComponent() {
+  globalThis.figma = createMockFigma();
+
+  const defaultVariant = await handleWriteRequest("create_component", undefined, {
+    name: "State=Default, Size=Small",
+  });
+  const hoverVariant = await handleWriteRequest("create_component", undefined, {
+    name: "State=Hover, Size=Small",
+  });
+  await handleWriteRequest("combine_as_variants", undefined, {
+    componentIds: [defaultVariant.nodeId, hoverVariant.nodeId],
+    name: "Button",
+  });
+
+  const result = await handleWriteRequest("set_variant_properties", undefined, {
+    componentId: hoverVariant.nodeId,
+    variantProperties: { Size: "Large" },
+  });
+
+  assert.equal(result.type, "COMPONENT");
+  assert.equal(result.name, "State=Hover, Size=Large");
+  assert.deepEqual(result.variantProperties, { State: "Hover", Size: "Large" });
+}
+
+/** Verifies component property definitions can be added and edited on a component. */
+async function testManageComponentPropertiesAddEditDelete() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, { name: "Button" });
+  const addResult = await handleWriteRequest("manage_component_properties", undefined, {
+    componentId: component.nodeId,
+    operations: [
+      { action: "add", propertyName: "Label", propertyType: "TEXT", defaultValue: "Submit" },
+      { action: "add", propertyName: "Enabled", propertyType: "BOOLEAN", defaultValue: true },
+    ],
+  });
+
+  const labelName = addResult.operations[0].returnedName;
+  assert.match(labelName, /^Label#/);
+  assert.equal(addResult.node.componentPropertyDefinitions[labelName].defaultValue, "Submit");
+
+  const editResult = await handleWriteRequest("manage_component_properties", undefined, {
+    componentId: component.nodeId,
+    operations: [
+      { action: "edit", propertyName: labelName, newName: "ButtonLabel", defaultValue: "Continue" },
+    ],
+  });
+  const renamed = editResult.operations[0].returnedName;
+  assert.match(renamed, /^ButtonLabel#/);
+  assert.equal(editResult.node.componentPropertyDefinitions[renamed].defaultValue, "Continue");
+
+  const deleteResult = await handleWriteRequest("manage_component_properties", undefined, {
+    componentId: component.nodeId,
+    operations: [{ action: "delete", propertyName: renamed }],
+  });
+  assert.equal(deleteResult.node.componentPropertyDefinitions[renamed], undefined);
+}
+
+/** Verifies instance component properties can be set through setProperties. */
+async function testSetComponentPropertiesOnInstance() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, { name: "Button" });
+  const instance = await handleWriteRequest("create_instance", undefined, {
+    componentId: component.nodeId,
+  });
+
+  const result = await handleWriteRequest("set_component_properties", undefined, {
+    instanceId: instance.nodeId,
+    properties: { Label: "Buy", Enabled: true },
+  });
+
+  assert.equal(result.type, "INSTANCE");
+  assert.deepEqual(result.componentProperties, { Label: "Buy", Enabled: true });
+  assert.equal(result.node.componentProperties.Label.value, "Buy");
+  assert.equal(result.node.componentProperties.Enabled.value, true);
+}
+
+/** Verifies nested instances can be marked as exposed. */
+async function testSetExposedInstance() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, { name: "Icon" });
+  const instance = await handleWriteRequest("create_instance", undefined, {
+    componentId: component.nodeId,
+  });
+
+  const result = await handleWriteRequest("set_exposed_instance", undefined, {
+    instanceId: instance.nodeId,
+    isExposed: true,
+  });
+
+  assert.equal(result.type, "INSTANCE");
+  assert.equal(result.isExposedInstance, true);
+  assert.equal(result.node.isExposedInstance, true);
+}
+
+/** Verifies variant property writes reject non-variant components. */
+async function testSetVariantPropertiesRejectsStandaloneComponent() {
+  globalThis.figma = createMockFigma();
+  const component = await handleWriteRequest("create_component", undefined, { name: "Standalone" });
+
+  await assertMutationError(
+    handleWriteRequest("set_variant_properties", undefined, {
+      componentId: component.nodeId,
+      variantProperties: { State: "Hover" },
+    }),
+    "INVALID_COMPONENT",
+    /inside a COMPONENT_SET/
+  );
+}
+
 /** Runs the write-tool test cases and reports a simple pass/fail summary. */
 async function runTests() {
   const tests = [
@@ -842,6 +1037,11 @@ async function runTests() {
     ["testCombineAsVariantsMissingComponentReportsNotFound", testCombineAsVariantsMissingComponentReportsNotFound],
     ["testCombineAsVariantsRejectsNonComponentSource", testCombineAsVariantsRejectsNonComponentSource],
     ["testBatchCombineAsVariantsSupportsTmpRefs", testBatchCombineAsVariantsSupportsTmpRefs],
+    ["testSetVariantPropertiesRenamesVariantComponent", testSetVariantPropertiesRenamesVariantComponent],
+    ["testManageComponentPropertiesAddEditDelete", testManageComponentPropertiesAddEditDelete],
+    ["testSetComponentPropertiesOnInstance", testSetComponentPropertiesOnInstance],
+    ["testSetExposedInstance", testSetExposedInstance],
+    ["testSetVariantPropertiesRejectsStandaloneComponent", testSetVariantPropertiesRejectsStandaloneComponent],
     ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
