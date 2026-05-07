@@ -55,6 +55,7 @@ type WriteToolName = keyof Pick<
   | "create_frame"
   | "create_component"
   | "create_instance"
+  | "combine_as_variants"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -319,6 +320,11 @@ export function registerTools(server: McpServer, node: Node): void {
     "create_instance",
     "Create an instance from a local Figma component. componentId must reference a COMPONENT node on the current page.",
     (args, fileKey) => node.sendWithParams("create_instance", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "combine_as_variants",
+    "Combine two or more local Figma components into a native Component Set / Variants node using figma.combineAsVariants(...).",
+    (args, fileKey) => node.sendWithParams("combine_as_variants", undefined, args, fileKey)
   );
   registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
     node.sendWithParams("create_text", undefined, args, fileKey)

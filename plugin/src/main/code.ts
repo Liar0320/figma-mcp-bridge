@@ -27,6 +27,7 @@ type RequestType =
   | "create_frame"
   | "create_component"
   | "create_instance"
+  | "combine_as_variants"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -505,6 +506,7 @@ const handleRequest = async (
       case "create_frame":
       case "create_component":
       case "create_instance":
+      case "combine_as_variants":
       case "create_text":
       case "create_rectangle":
       case "append_children":

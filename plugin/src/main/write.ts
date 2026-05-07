@@ -246,6 +246,19 @@ function validateWriteToolParams(
       if (params?.y !== undefined) getNumber(params.y, "y");
       getOptionalNonEmptyString(params?.key, "key");
       return;
+    case "combine_as_variants":
+      if (!Array.isArray(params?.componentIds) || params.componentIds.length < 2) {
+        fail("INVALID_INPUT", "componentIds must include at least two component IDs");
+      }
+      params.componentIds.forEach((componentId, index) =>
+        getFigmaNodeId(componentId, `componentIds[${index}]`)
+      );
+      getOptionalFigmaNodeId(params?.parentId, "parentId");
+      getOptionalNonEmptyString(params?.name, "name");
+      if (params?.x !== undefined) getNumber(params.x, "x");
+      if (params?.y !== undefined) getNumber(params.y, "y");
+      getOptionalNonEmptyString(params?.key, "key");
+      return;
     case "create_text":
       if (params) validateCreateNodeBase(params);
       if (params?.characters !== undefined && typeof params.characters !== "string") {
@@ -685,6 +698,40 @@ async function createInstance(params: RequestParams): Promise<MutationResult> {
   }
 }
 
+/** Combines existing local components into a Figma-native component set. */
+async function combineAsVariants(
+  params: RequestParams
+): Promise<MutationResult & { sourceComponentIds: string[] }> {
+  const parent = await getParentNode(getOptionalString(params?.parentId));
+  if (!Array.isArray(params?.componentIds) || params.componentIds.length < 2) {
+    fail("INVALID_INPUT", "componentIds must include at least two component IDs");
+  }
+
+  const components: ComponentNode[] = [];
+  for (let index = 0; index < params.componentIds.length; index++) {
+    const componentId = getString(params.componentIds[index], `componentIds[${index}]`);
+    const node = await getNodeById(componentId, `componentIds[${index}]`);
+    if (node.type !== "COMPONENT") {
+      fail("INVALID_COMPONENT", `componentIds[${index}] must reference a COMPONENT node`);
+    }
+    components.push(node as ComponentNode);
+  }
+
+  const componentSet = figma.combineAsVariants(components, parent);
+  try {
+    setName(componentSet, params?.name, "Component Set");
+    applyPosition(componentSet, params);
+    setPluginData(componentSet, getOptionalString(params?.key));
+    return {
+      ...toMutationResult(componentSet),
+      sourceComponentIds: components.map((component) => component.id),
+    };
+  } catch (error) {
+    componentSet.remove();
+    throw error;
+  }
+}
+
 /** Creates a text node on the current page and applies content and style inputs. */
 async function createText(params: RequestParams): Promise<MutationResult> {
   const parent = await getParentNode(getOptionalString(params?.parentId));
@@ -823,6 +870,8 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return createComponent(params);
     case "create_instance":
       return createInstance(params);
+    case "combine_as_variants":
+      return combineAsVariants(params);
     case "create_text":
       return createText(params);
     case "create_rectangle":
