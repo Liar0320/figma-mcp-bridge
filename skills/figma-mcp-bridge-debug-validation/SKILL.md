@@ -1,32 +1,26 @@
 ---
 name: figma-mcp-bridge-debug-validation
-description: Use when Figma MCP Bridge calls fail, time out, reject node IDs or output paths, or appear stuck on plugin connectivity, leader forwarding, or screenshot export validation.
+description: Diagnose Figma MCP Bridge connection, parameter, routing, export, and mutation failures.
 ---
 
 # Figma MCP Bridge Debug Validation
 
-## Overview
+Use this skill when a Figma MCP Bridge tool fails, times out, returns unexpected data, or appears to use stale plugin/server code.
 
-这个 skill 负责把错误先归类，再决定查连接、查参数还是查文件系统规则。它覆盖 server 侧 bridge/election/leader/follower 行为，以及插件端最常见的报错面。
+## Debug order
 
-## Use It For
+1. Check whether the Figma plugin is running and connected.
+2. Confirm the MCP server is listening on the expected local port.
+3. Confirm the active file/page/selection with read-only tools.
+4. Validate request parameters: node IDs, paths, colors, format, scale, and `dryRun`.
+5. Distinguish server registration, plugin routing, write executor support, and leader/follower forwarding.
+6. Rebuild server/plugin if built artifacts are stale.
+7. Re-test with a known working read tool before testing the failing tool again.
 
-- 报 `Plugin not connected`
-- 报 `Request timed out`
-- 报 `Node ID must use colon format`
-- 报 `No nodes to export`
-- 报 `outputPath must be inside...` 或 `File already exists...`
-- follower/leader 切换后行为异常
+## Common signals
 
-## Triage Order
-
-1. 先查插件是否已打开并连上 `ws://localhost:1994/ws`。
-2. 再查请求参数是否符合 schema。
-3. 再查节点是否真实存在或当前选区是否为空。
-4. 涉及导出落盘时，再查 `outputPath`、扩展名和文件覆盖。
-5. 如果像是转发问题，再看 leader/follower 路由链。
-
-## References
-
-- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-- [../INTAKE_AUDIT.md](../INTAKE_AUDIT.md)
+- `Plugin not connected`: plugin is not running, not connected to the bridge, or the server is not listening.
+- `Unknown request type`: server and plugin builds may be out of sync, or plugin routing lacks the request type.
+- Path rejection: `save_screenshots` output path is outside the allowed working directory or conflicts with an existing file.
+- Format rejection: screenshot format does not match the file extension.
+- Write appears to succeed but read-back is unchanged: mutation executor or binding read-back is incomplete.

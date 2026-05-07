@@ -1,57 +1,36 @@
-## Style And Token Patterns
+# Style and Token Patterns
 
-### `get_styles` 返回什么
+## What `get_styles` returns
 
-- `paints`
-- `text`
-- `effects`
-- `grids`
+`get_styles` reads local Figma styles: paint, text, effect, and grid styles. It is useful for answering which local styles exist and what their core visual properties are.
 
-它适合回答：
+## What `get_variable_defs` returns
 
-- 这个文件有哪些本地样式？
-- 有哪些 text style / effect style / grid style？
-- 某个 style 名字和基础视觉属性是什么？
+`get_variable_defs` reads variable collections, modes, variable IDs, names, resolved types, values by mode, and aliases. It is useful for understanding collections, mode values, and variable alias relationships.
 
-### `get_variable_defs` 返回什么
+## What `get_design_tokens` returns
 
-- `collections`
-- 每个 collection 下的 `modes`
-- 每个 variable 的 `id`、`name`、`resolvedType`
-- `valuesByMode`
+`get_design_tokens` returns a normalized token graph.
 
-它适合回答：
+- Each token has a stable `path`, such as `color.brand.primary`.
+- Each token preserves `source: "variable" | "style" | "inferred"`.
+- Variable tokens keep collection, mode, value, and alias metadata.
+- Style tokens keep style type and a summary of original style properties.
+- The summary groups counts by source and token group.
 
-- 这个文件有哪些变量集合？
-- 每个 mode 的 token 值是什么？
-- 哪些 token 是 alias 到别的变量？
+Use it for AI-facing design-system summaries, token overviews, and source/group breakdowns.
 
-### `get_design_tokens` 返回什么
+## Interpreting variable values
 
-- 一个统一的 token graph
-- 每个 token 都有稳定 `path`，例如 `color.brand.primary`
-- 每个 token 都保留 `source: "variable" | "style" | "inferred"`
-- variable token 保留 collection、modes、valuesByMode、alias 信息
-- style token 保留 paint/text/effect/grid 的 styleType 与原始属性摘要
-- summary 按 source 和 group 汇总数量
+- `type: "VARIABLE_ALIAS"` means the value references another variable.
+- `type: "COLOR"` means the plugin returned a structured color object.
+- Do not assume all modes have the same value shape. Inspect each mode separately.
 
-它适合回答：
+## Recommended response pattern
 
-- 给 AI 的设计系统 token 概览是什么？
-- 这个文件有哪些颜色/字体/spacing/radius token？
-- 哪些 token 来自 variables，哪些来自 styles？
-
-### 解释变量值时的防错点
-
-- 如果值里出现 `type: "VARIABLE_ALIAS"`，说明这是引用，不是最终展开值。
-- 如果值里出现 `type: "COLOR"`，说明插件已把颜色对象结构化返回。
-- 不要假设所有 mode 都有同构值；需要逐个 mode 看。
-
-### 推荐回答套路
-
-1. 先判断用户需要 raw 数据还是统一 token graph。
-2. 统一设计系统概览优先用 `get_design_tokens`。
-3. raw styles 用 `get_styles` 分类汇总。
-4. raw variables 用 `get_variable_defs` 的 `collection -> mode -> variable` 结构汇总。
-5. 如果用户关心 token 依赖关系，显式点出 alias。
-6. 不要把 `source: "style"` 的 token 说成 Figma variable。
+1. Decide whether the user needs raw data or a normalized token graph.
+2. Use `get_design_tokens` for a unified design-system overview.
+3. Use `get_styles` for raw style summaries.
+4. Use `get_variable_defs` for collection, mode, and variable detail.
+5. Mention aliases explicitly when token relationships matter.
+6. Do not call `source: "style"` tokens Figma variables.

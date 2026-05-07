@@ -1,42 +1,34 @@
-## Discovery Workflows
+# Discovery Workflows
 
-### 1. 从当前工作区开始
+## 1. Start from the current workspace
 
-如果用户只是说“看看这个设计”或“分析当前页面”：
+If the user says to inspect the current design or analyze the current page:
 
-1. `get_metadata`
-2. `get_selection`
-3. 如果有选区，`get_design_context`
-4. 如果没有选区，再决定是 `get_design_context` 还是 `get_document`
+1. Call `get_metadata`.
+2. Call `get_selection`.
+3. If a selection exists, call `get_design_context`.
+4. If no selection exists, decide between `get_design_context` and `get_document` based on the required scope.
 
-### 2. 从 nodeId 开始
+## 2. Start from a node ID
 
-只有在以下来源之一已经给出 ID 时才进入这条路：
+Use this path only when an ID already came from one of these sources:
 
-- 之前某次 `get_selection` 的返回
-- `get_document` / `get_design_context` 返回中的 `id`
-- 用户明确给出且格式正确的 `123:456`
+- A previous `get_selection` response.
+- A `get_document` or `get_design_context` response.
+- A user-provided ID in valid `123:456` format.
 
-然后才调用 `get_node`。
+Then call `get_node`.
 
-### 3. 何时选 `get_document`
+## 3. When to use `get_document`
 
-用在这些场景：
+Use it when you need the full current-page tree, need to scan page hierarchy, and can tolerate a larger response.
 
-- 要扫整页节点层级
-- 需要当前页完整 document tree
-- 能接受更大响应体
+## 4. When to use `get_design_context`
 
-### 4. 何时选 `get_design_context`
+Use it when you need a compact local design summary, want to reduce token noise, or need to control traversal depth.
 
-用在这些场景：
+## 5. Semantic differences
 
-- 只想理解局部设计块
-- 希望减少 token 噪音
-- 想通过 `depth` 控制展开层数
-
-### 5. 已知语义差异
-
-- `get_document` 返回当前页 document tree。
-- `get_selection` 只返回当前选中的节点数组。
-- `get_design_context` 在有选区时以选区为中心，在无选区时退回当前页，并且会按 `depth` 截断子树。
+- `get_document` returns the current page document tree.
+- `get_selection` returns only selected nodes.
+- `get_design_context` centers on the selection when present, otherwise falls back to the current page, and truncates children according to `depth`.
