@@ -169,6 +169,14 @@ export const collectLocalComponents = async (): Promise<LocalComponentsResult> =
   let componentSets: ComponentSetNode[] = [];
 
   try {
+    await figma.loadAllPagesAsync();
+  } catch (error) {
+    warnings.push({
+      message: `Failed to load all pages before component traversal: ${errorMessage(error)}`,
+    });
+  }
+
+  try {
     components = figma.root.findAll(
       (node) => node.type === "COMPONENT"
     ) as ComponentNode[];

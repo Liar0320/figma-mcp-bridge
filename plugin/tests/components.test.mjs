@@ -45,10 +45,16 @@ function componentSet(id, name, overrides = {}) {
   };
 }
 
-function setFigmaMock({ root, components = [], componentSets = [] }) {
+function setFigmaMock({ root, loadAllPagesAsync } = {}) {
+  const calls = [];
   globalThis.figma = {
+    async loadAllPagesAsync() {
+      calls.push("loadAllPagesAsync");
+      if (loadAllPagesAsync) await loadAllPagesAsync();
+    },
     root: Object.assign(root, {
       findAll(callback) {
+        calls.push("findAll");
         const results = [];
         const visit = (node) => {
           for (const child of node.children ?? []) {
@@ -61,6 +67,7 @@ function setFigmaMock({ root, components = [], componentSets = [] }) {
       },
     }),
   };
+  return { calls };
 }
 
 async function testStandaloneComponentAcrossFilePages() {
@@ -158,9 +165,40 @@ async function testMetadataReadFailureIsWarningOnly() {
   assert.equal(result.warnings[0].nodeId, "30:1");
 }
 
+async function testLoadAllPagesBeforeTraversingDynamicPageDocument() {
+  const { root, pageB } = makeDocument();
+  append(pageB, component("40:1", "Remote Page Component"));
+  const { calls } = setFigmaMock({ root });
+
+  const result = await collectLocalComponents();
+
+  assert.equal(result.summary.componentCount, 1);
+  assert.equal(calls[0], "loadAllPagesAsync");
+  assert.deepEqual(calls.slice(1), ["findAll", "findAll"]);
+}
+
+async function testLoadAllPagesFailureIsWarningOnly() {
+  const { root, pageA } = makeDocument();
+  append(pageA, component("50:1", "Still Traversed Component"));
+  setFigmaMock({
+    root,
+    async loadAllPagesAsync() {
+      throw new Error("load failed");
+    },
+  });
+
+  const result = await collectLocalComponents();
+
+  assert.equal(result.summary.componentCount, 1);
+  assert.equal(result.summary.warningCount, 1);
+  assert.match(result.warnings[0].message, /load failed/);
+}
+
 await testStandaloneComponentAcrossFilePages();
 await testComponentSetWithVariantsHierarchy();
 await testEmptyFile();
 await testMetadataReadFailureIsWarningOnly();
+await testLoadAllPagesBeforeTraversingDynamicPageDocument();
+await testLoadAllPagesFailureIsWarningOnly();
 
-console.log("components.test.mjs: 4 passed");
+console.log("components.test.mjs: 6 passed");
