@@ -961,7 +961,20 @@ async function setExposedInstance(params: RequestParams): Promise<MutationResult
   if (node.type !== "INSTANCE") {
     fail("INVALID_INSTANCE", "instanceId must reference an INSTANCE node");
   }
-  (node as InstanceNode).isExposedInstance = params?.isExposed === true;
+  try {
+    (node as InstanceNode).isExposedInstance = params?.isExposed === true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    fail(
+      "FIGMA_API_LIMITATION",
+      `Unable to set exposed instance state: ${message}`,
+      {
+        instanceId: node.id,
+        requiredContext:
+          "Figma only allows eligible nested instances inside components/component sets to be exposed.",
+      }
+    );
+  }
   return {
     ...toMutationResult(node),
     isExposedInstance: (node as InstanceNode).isExposedInstance,

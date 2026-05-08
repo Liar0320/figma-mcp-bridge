@@ -148,12 +148,24 @@ function createMockFigma() {
     });
 
   /** Adds component property definition APIs to component/component-set mocks. */
-  const withComponentPropertyDefinitions = (node) =>
-    Object.assign(node, {
-      componentPropertyDefinitions: {},
+  const withComponentPropertyDefinitions = (node) => {
+    const definitions = {};
+    Object.defineProperty(node, "componentPropertyDefinitions", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        if (this.type === "COMPONENT" && this.parent?.type === "COMPONENT_SET") {
+          throw new Error(
+            "in get_componentPropertyDefinitions: Can only get component property definitions of a component set or non-variant component"
+          );
+        }
+        return definitions;
+      },
+    });
+    return Object.assign(node, {
       addComponentProperty(propertyName, type, defaultValue, options) {
         const returnedName = type === "VARIANT" ? propertyName : `${propertyName}#${createNodeId()}`;
-        this.componentPropertyDefinitions[returnedName] = {
+        definitions[returnedName] = {
           type,
           defaultValue,
           ...(type === "VARIANT" ? { variantOptions: [String(defaultValue)] } : {}),
@@ -162,14 +174,14 @@ function createMockFigma() {
         return returnedName;
       },
       editComponentProperty(propertyName, next) {
-        const current = this.componentPropertyDefinitions[propertyName];
+        const current = definitions[propertyName];
         if (!current) throw new Error(`Unknown component property: ${propertyName}`);
         let returnedName = propertyName;
         if (next.name && next.name !== propertyName) {
           returnedName = current.type === "VARIANT" ? next.name : `${next.name}#${createNodeId()}`;
-          delete this.componentPropertyDefinitions[propertyName];
+          delete definitions[propertyName];
         }
-        this.componentPropertyDefinitions[returnedName] = {
+        definitions[returnedName] = {
           ...current,
           ...(next.defaultValue !== undefined ? { defaultValue: next.defaultValue } : {}),
           ...(next.preferredValues !== undefined ? { preferredValues: next.preferredValues } : {}),
@@ -177,12 +189,13 @@ function createMockFigma() {
         return returnedName;
       },
       deleteComponentProperty(propertyName) {
-        if (!this.componentPropertyDefinitions[propertyName]) {
+        if (!definitions[propertyName]) {
           throw new Error(`Unknown component property: ${propertyName}`);
         }
-        delete this.componentPropertyDefinitions[propertyName];
+        delete definitions[propertyName];
       },
     });
+  };
 
   const parseVariantName = (name) =>
     Object.fromEntries(

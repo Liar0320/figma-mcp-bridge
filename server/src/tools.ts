@@ -347,7 +347,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "set_exposed_instance",
-    "Set whether a nested instance is exposed to its containing component/component set.",
+    "Set whether an eligible nested instance is exposed to its containing component/component set. Figma only allows exposing nested instances that satisfy native component-property constraints.",
     (args, fileKey) => node.sendWithParams("set_exposed_instance", undefined, args, fileKey)
   );
   registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>

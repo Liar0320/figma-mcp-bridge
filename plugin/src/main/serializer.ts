@@ -372,6 +372,9 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   return styles;
 };
 
+const canReadComponentPropertyDefinitions = (node: SceneNode): node is (ComponentNode | ComponentSetNode) & ComponentPropertiesMixin =>
+  node.type === "COMPONENT_SET" || (node.type === "COMPONENT" && node.parent?.type !== "COMPONENT_SET");
+
 const serializeComponentMetadata = (node: SceneNode, base: SerializedNode): SerializedNode => {
   const enriched = { ...base };
 
@@ -388,9 +391,11 @@ const serializeComponentMetadata = (node: SceneNode, base: SerializedNode): Seri
       ])
     );
   }
-  if ("componentPropertyDefinitions" in node) {
+  // Figma throws when reading componentPropertyDefinitions on variant components.
+  // The field is only valid for component sets and non-variant components.
+  if (canReadComponentPropertyDefinitions(node) && "componentPropertyDefinitions" in node) {
     enriched.componentPropertyDefinitions = {
-      ...(node.componentPropertyDefinitions as ComponentPropertyDefinitions),
+      ...node.componentPropertyDefinitions,
     };
   }
   if ("componentProperties" in node) {
