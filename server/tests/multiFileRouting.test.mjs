@@ -50,6 +50,8 @@ test("all MCP tool schemas accept optional fileKey", () => {
     "get_node",
     "get_styles",
     "get_metadata",
+    "get_local_components",
+    "get_components",
     "get_design_context",
     "get_variable_defs",
     "get_design_tokens",

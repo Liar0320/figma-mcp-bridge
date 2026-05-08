@@ -140,6 +140,24 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "get_local_components",
+    "Get all local Figma components and component sets in the current file, including page metadata, keys, descriptions, component property definitions, variant properties, and component-set/variant hierarchy. Read-only and does not require selection.",
+    toolInputSchemas.get_local_components.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_local_components", undefined, fileKey));
+    }
+  );
+
+  server.tool(
+    "get_components",
+    "Alias for get_local_components. Lists local components and component sets in the current Figma file with hierarchy and metadata.",
+    toolInputSchemas.get_components.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() => node.send("get_components", undefined, fileKey));
+    }
+  );
+
+  server.tool(
     "get_design_context",
     "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context.",
     toolInputSchemas.get_design_context.shape,
