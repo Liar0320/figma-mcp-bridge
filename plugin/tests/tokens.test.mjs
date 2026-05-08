@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  collectVariableTokens,
   disambiguateTokenPaths,
   normalizeTokenPath,
   normalizeTokenSegment,
@@ -45,8 +46,59 @@ function testGroupPrefixedNamesDoNotDuplicateGroup() {
   assert.equal(normalizeTokenPath("size", "size/card"), "size.card");
 }
 
+async function testCollectVariableTokensUsesBulkVariableApi() {
+  let getLocalVariablesCalls = 0;
+  let getVariableByIdCalls = 0;
+
+  globalThis.figma = {
+    variables: {
+      async getLocalVariableCollectionsAsync() {
+        return [{
+          id: "VariableCollectionId:1:1",
+          name: "Tokens",
+          defaultModeId: "mode:1",
+          modes: [{ modeId: "mode:1", name: "Default" }],
+          variableIds: ["VariableID:1:1", "VariableID:1:2"],
+        }];
+      },
+      async getLocalVariablesAsync() {
+        getLocalVariablesCalls += 1;
+        return [
+          {
+            id: "VariableID:1:1",
+            name: "radius/card",
+            resolvedType: "FLOAT",
+            valuesByMode: { "mode:1": 24 },
+            variableCollectionId: "VariableCollectionId:1:1",
+            description: "",
+          },
+          {
+            id: "VariableID:1:2",
+            name: "color/brand",
+            resolvedType: "COLOR",
+            valuesByMode: { "mode:1": { r: 1, g: 0.5, b: 0, a: 1 } },
+            variableCollectionId: "VariableCollectionId:1:1",
+            description: "",
+          },
+        ];
+      },
+      async getVariableByIdAsync() {
+        getVariableByIdCalls += 1;
+        throw new Error("per-variable API should not be called when bulk API is available");
+      },
+    },
+  };
+
+  const tokens = await collectVariableTokens();
+
+  assert.equal(getLocalVariablesCalls, 1);
+  assert.equal(getVariableByIdCalls, 0);
+  assert.deepEqual(tokens.map((token) => token.path), ["radius.card", "color.brand"]);
+}
+
 testChineseSegmentsArePreserved();
 testDuplicatePathsAreDisambiguatedDeterministically();
 testGroupPrefixedNamesDoNotDuplicateGroup();
+await testCollectVariableTokensUsesBulkVariableApi();
 
-console.log("tokens.test.mjs: 3 passed");
+console.log("tokens.test.mjs: 4 passed");
