@@ -56,6 +56,10 @@ type WriteToolName = keyof Pick<
   | "create_component"
   | "create_instance"
   | "combine_as_variants"
+  | "set_variant_properties"
+  | "manage_component_properties"
+  | "set_component_properties"
+  | "set_exposed_instance"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -325,6 +329,26 @@ export function registerTools(server: McpServer, node: Node): void {
     "combine_as_variants",
     "Combine two or more local Figma components into a native Component Set / Variants node using figma.combineAsVariants(...).",
     (args, fileKey) => node.sendWithParams("combine_as_variants", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "set_variant_properties",
+    "Set or update variant properties such as State=Hover or Size=Large on a COMPONENT inside a COMPONENT_SET by renaming the variant.",
+    (args, fileKey) => node.sendWithParams("set_variant_properties", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "manage_component_properties",
+    "Add, edit, or delete component property definitions on a COMPONENT or COMPONENT_SET. Supports BOOLEAN, TEXT, INSTANCE_SWAP, and VARIANT definitions where allowed by Figma.",
+    (args, fileKey) => node.sendWithParams("manage_component_properties", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "set_component_properties",
+    "Set component or variant property values on an INSTANCE via instance.setProperties(...).",
+    (args, fileKey) => node.sendWithParams("set_component_properties", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "set_exposed_instance",
+    "Set whether an eligible nested instance is exposed to its containing component/component set. Figma only allows exposing nested instances that satisfy native component-property constraints.",
+    (args, fileKey) => node.sendWithParams("set_exposed_instance", undefined, args, fileKey)
   );
   registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
     node.sendWithParams("create_text", undefined, args, fileKey)

@@ -70,6 +70,22 @@ const variableType = z.enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"]);
 const styleType = z.enum(["paint", "text", "effect", "grid"]);
 const applyTokenMatchType = z.enum(["exactValue", "style", "boundVariable"]);
 const designTokenExportFormat = z.enum(["json", "dtcg", "css", "tailwind"]);
+const componentPropertyType = z.enum(["BOOLEAN", "TEXT", "INSTANCE_SWAP", "VARIANT"]);
+const componentPropertyValue = z.union([z.string(), z.boolean()]);
+const componentPropertyMap = z.record(z.string().min(1), componentPropertyValue);
+const variantPropertyMap = z.record(z.string().min(1), z.string().min(1));
+const preferredInstanceSwapValue = z.object({
+  type: z.enum(["COMPONENT", "COMPONENT_SET"]),
+  key: z.string().min(1),
+});
+const componentPropertyOperation = z.object({
+  action: z.enum(["add", "edit", "delete"]),
+  propertyName: z.string().min(1),
+  propertyType: componentPropertyType.optional(),
+  defaultValue: componentPropertyValue.optional(),
+  newName: z.string().min(1).optional(),
+  preferredValues: z.array(preferredInstanceSwapValue).optional(),
+});
 const designTokenInput = z.object({
   name: z.string().min(1),
   group: tokenGroup,
@@ -91,6 +107,10 @@ export const batchOperationType = z.enum([
   "create_component",
   "create_instance",
   "combine_as_variants",
+  "set_variant_properties",
+  "manage_component_properties",
+  "set_component_properties",
+  "set_exposed_instance",
   "create_text",
   "create_rectangle",
   "append_children",
@@ -348,6 +368,23 @@ export const toolInputSchemas = {
     y: z.number().optional(),
     key: z.string().min(1).optional(),
   }),
+  set_variant_properties: withFileKey({
+    componentId: figmaNodeId.describe("A COMPONENT node inside a COMPONENT_SET"),
+    variantProperties: variantPropertyMap.describe("Variant dimension/value pairs, e.g. { State: \"Hover\", Size: \"Large\" }"),
+    replace: z.boolean().optional().describe("Replace all current variant properties instead of merging with existing values. Default false."),
+  }),
+  manage_component_properties: withFileKey({
+    componentId: figmaNodeId.describe("A COMPONENT or COMPONENT_SET node that owns component property definitions"),
+    operations: z.array(componentPropertyOperation).min(1).max(50),
+  }),
+  set_component_properties: withFileKey({
+    instanceId: figmaNodeId.describe("An INSTANCE node whose variant/component properties should be configured"),
+    properties: componentPropertyMap.describe("Component property values keyed by property name"),
+  }),
+  set_exposed_instance: withFileKey({
+    instanceId: figmaNodeId.describe("A nested INSTANCE node inside a component/component set"),
+    isExposed: z.boolean(),
+  }),
   create_text: createNodeBase.extend({
     fileKey: fileKeyField,
     characters: z.string().optional(),
@@ -462,6 +499,10 @@ const rpcToArgs: Record<
   create_component: (_nodeIds, params) => ({ ...params }),
   create_instance: (_nodeIds, params) => ({ ...params }),
   combine_as_variants: (_nodeIds, params) => ({ ...params }),
+  set_variant_properties: (_nodeIds, params) => ({ ...params }),
+  manage_component_properties: (_nodeIds, params) => ({ ...params }),
+  set_component_properties: (_nodeIds, params) => ({ ...params }),
+  set_exposed_instance: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_rectangle: (_nodeIds, params) => ({ ...params }),
   append_children: (_nodeIds, params) => ({ ...params }),
