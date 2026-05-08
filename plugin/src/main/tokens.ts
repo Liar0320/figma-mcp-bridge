@@ -44,6 +44,14 @@ export type DesignTokensResponse = {
   };
 };
 
+export type LocalVariableCollectionDefinition = {
+  id: string;
+  name: string;
+  defaultModeId: string;
+  modes: { modeId: string; name: string }[];
+  variables: Variable[];
+};
+
 const FLOAT_GROUP_PATTERNS: Array<[TokenGroup, RegExp]> = [
   ["spacing", /(^|[/\s_.-])(space|spacing|gap|padding|margin|inset)([/\s_.-]|$)/i],
   ["radius", /(^|[/\s_.-])(radius|rounded|corner)([/\s_.-]|$)/i],
@@ -172,21 +180,112 @@ function defaultValueForModes(
   return valuesByMode[defaultModeId] ?? Object.values(valuesByMode)[0];
 }
 
+function annotateVariableApiError(stage: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Figma variable API failed while ${stage}. ` +
+      `The bridge/plugin connection is alive, but Figma's variables API did not complete for the target file. ` +
+      `Original error: ${message}`,
+  );
+}
+
+async function readLocalVariableCollections(): Promise<VariableCollection[]> {
+  try {
+    return await figma.variables.getLocalVariableCollectionsAsync();
+  } catch (error) {
+    throw annotateVariableApiError("reading local variable collections", error);
+  }
+}
+
+async function readLocalVariables(): Promise<Variable[]> {
+  const variablesApi = figma.variables as typeof figma.variables & {
+    getLocalVariablesAsync?: () => Promise<Variable[]>;
+  };
+
+  if (typeof variablesApi.getLocalVariablesAsync !== "function") {
+    throw new Error("getLocalVariablesAsync is not available");
+  }
+
+  try {
+    return await variablesApi.getLocalVariablesAsync();
+  } catch (error) {
+    throw annotateVariableApiError("reading local variables", error);
+  }
+}
+
+async function readVariablesById(variableIds: string[]): Promise<Variable[]> {
+  try {
+    const variables = await Promise.all(
+      variableIds.map((id) => figma.variables.getVariableByIdAsync(id)),
+    );
+    return variables.filter((variable): variable is Variable => variable !== null);
+  } catch (error) {
+    throw annotateVariableApiError("reading local variables by id", error);
+  }
+}
+
+function getVariableCollectionId(variable: Variable): string | undefined {
+  return (variable as unknown as { variableCollectionId?: string }).variableCollectionId;
+}
+
+export async function collectLocalVariableDefinitions(): Promise<LocalVariableCollectionDefinition[]> {
+  const collections = await readLocalVariableCollections();
+  const variableIds = collections.flatMap((collection) => collection.variableIds);
+
+  let variables: Variable[];
+  try {
+    variables = await readLocalVariables();
+  } catch (error) {
+    if (error instanceof Error && error.message === "getLocalVariablesAsync is not available") {
+      variables = await readVariablesById(variableIds);
+    } else {
+      throw error;
+    }
+  }
+
+  const variablesById = new Map(variables.map((variable) => [variable.id, variable]));
+  const variablesByCollectionId = new Map<string, Variable[]>();
+
+  for (const variable of variables) {
+    const collectionId = getVariableCollectionId(variable);
+    if (!collectionId) continue;
+    const group = variablesByCollectionId.get(collectionId) ?? [];
+    group.push(variable);
+    variablesByCollectionId.set(collectionId, group);
+  }
+
+  return collections.map((collection) => {
+    const collectionVariables =
+      collection.variableIds.length > 0
+        ? collection.variableIds
+            .map((id) => variablesById.get(id))
+            .filter((variable): variable is Variable => variable !== undefined)
+        : (variablesByCollectionId.get(collection.id) ?? []);
+
+    return {
+      id: collection.id,
+      name: collection.name,
+      defaultModeId: collection.defaultModeId,
+      modes: collection.modes.map((mode) => ({
+        modeId: mode.modeId,
+        name: mode.name,
+      })),
+      variables: collectionVariables,
+    };
+  });
+}
+
 export async function collectVariableTokens(): Promise<NormalizedToken[]> {
-  const collections = await figma.variables.getLocalVariableCollectionsAsync();
+  const collections = await collectLocalVariableDefinitions();
   const tokens: NormalizedToken[] = [];
 
   for (const collection of collections) {
-    const variables = await Promise.all(
-      collection.variableIds.map((id) => figma.variables.getVariableByIdAsync(id)),
-    );
     const modes = collection.modes.map((mode) => ({
       id: mode.modeId,
       name: mode.name,
     }));
 
-    for (const variable of variables) {
-      if (!variable) continue;
+    for (const variable of collection.variables) {
       const group = groupFromVariable(variable);
       const valuesByMode = Object.fromEntries(
         Object.entries(variable.valuesByMode).map(([modeId, value]) => [
