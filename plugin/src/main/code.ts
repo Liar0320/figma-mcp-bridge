@@ -1,4 +1,5 @@
 import { serializeNode } from "./serializer";
+import { collectLocalComponents } from "./components";
 import { applyTokens } from "./tokenApply";
 import { collectDesignTokenAudit } from "./tokenAudit";
 import { createDesignTokens } from "./tokenCreate";
@@ -18,6 +19,8 @@ type RequestType =
   | "get_node"
   | "get_styles"
   | "get_metadata"
+  | "get_local_components"
+  | "get_components"
   | "get_design_context"
   | "get_variable_defs"
   | "get_design_tokens"
@@ -97,6 +100,8 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_node",
   "get_styles",
   "get_metadata",
+  "get_local_components",
+  "get_components",
   "get_design_context",
   "get_variable_defs",
   "get_design_tokens",
@@ -233,6 +238,14 @@ const handleRequest = async (
               name: page.name,
             })),
           },
+        };
+      }
+      case "get_local_components":
+      case "get_components": {
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await collectLocalComponents(),
         };
       }
       case "get_design_context": {

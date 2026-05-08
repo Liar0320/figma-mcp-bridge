@@ -17,6 +17,7 @@
     "src/main/tokenCreate.ts",
     "src/main/tokenApply.ts",
     "src/main/tokenExport.ts",
-    "src/main/tokens.ts"
+    "src/main/tokens.ts",
+    "src/main/components.ts"
   ]
 }

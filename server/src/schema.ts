@@ -154,6 +154,8 @@ export const toolInputSchemas = {
   get_selection: withFileKey({}),
   get_styles: withFileKey({}),
   get_metadata: withFileKey({}),
+  get_local_components: withFileKey({}),
+  get_components: withFileKey({}),
   get_variable_defs: withFileKey({}),
   get_design_tokens: withFileKey({}),
 
@@ -483,6 +485,8 @@ const rpcToArgs: Record<
   get_selection: (_nodeIds, params) => ({ ...params }),
   get_styles: (_nodeIds, params) => ({ ...params }),
   get_metadata: (_nodeIds, params) => ({ ...params }),
+  get_local_components: (_nodeIds, params) => ({ ...params }),
+  get_components: (_nodeIds, params) => ({ ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_design_tokens: (_nodeIds, params) => ({ ...params }),
   get_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
