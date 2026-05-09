@@ -62,22 +62,31 @@ function createMockFigma() {
     type: "DOCUMENT",
     parent: null,
     children: [],
-  };
-
-  const page = Object.assign(createBaseNode("1:0", "PAGE", "Page 1"), {
-    type: "PAGE",
-    children: [],
     appendChild(child) {
-      if (child.parent && "children" in child.parent) {
-        child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
-      }
       child.parent = this;
       this.children.push(child);
       registry.set(child.id, child);
     },
-  });
-  page.parent = documentNode;
-  documentNode.children.push(page);
+  };
+
+  const createPageNode = (id, name) => {
+    const pageNode = Object.assign(createBaseNode(id, "PAGE", name), {
+      type: "PAGE",
+      children: [],
+      appendChild(child) {
+        if (child.parent && "children" in child.parent) {
+          child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
+        }
+        child.parent = this;
+        this.children.push(child);
+        registry.set(child.id, child);
+      },
+    });
+    documentNode.appendChild(pageNode);
+    return pageNode;
+  };
+
+  const page = createPageNode("1:0", "Page 1");
   registry.set(page.id, page);
 
   /** Tracks nodes created during a test so async lookup behaves like the Figma runtime. */
@@ -295,7 +304,11 @@ function createMockFigma() {
     );
 
   return {
+    root: documentNode,
     currentPage: page,
+    createTestPage(name = `Page ${documentNode.children.length + 1}`) {
+      return createPageNode(createNodeId(), name);
+    },
     createFrame,
     createComponent,
     combineAsVariants,
@@ -304,6 +317,7 @@ function createMockFigma() {
     async getNodeByIdAsync(nodeId) {
       return registry.get(nodeId) ?? null;
     },
+    async loadAllPagesAsync() {},
     async loadFontAsync() {},
   };
 }
@@ -835,6 +849,114 @@ async function testFindNodesQuerySubstringFallback() {
   );
 }
 
+/** Verifies default find_nodes scope remains the current page. */
+async function testFindNodesDefaultScopeStaysOnCurrentPage() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, { name: "Button" });
+
+  assert.equal(result.summary.scope, "currentPage");
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button Current");
+  assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
+  assert.deepEqual(result.matches[0].path, ["Page 1", "Button Current"]);
+}
+
+/** Verifies all-pages search can find typed nodes outside the current page. */
+async function testFindNodesAllPagesTypeFilterIncludesRemotePages() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Frame" });
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button / Primary";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    type: "COMPONENT",
+  });
+
+  assert.equal(result.summary.scope, "allPages");
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].type, "COMPONENT");
+  assert.equal(result.matches[0].name, "Button / Primary");
+  assert.equal(result.matches[0].pageId, componentsPage.id);
+  assert.equal(result.matches[0].pageName, "Components");
+  assert.deepEqual(result.matches[0].path, ["Components", "Button / Primary"]);
+}
+
+/** Verifies pageId, exact matching, and component-set type filters compose. */
+async function testFindNodesPageIdExactComponentSetFilter() {
+  globalThis.figma = createMockFigma();
+
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const primary = globalThis.figma.createComponent();
+  primary.name = "State=Default";
+  componentsPage.appendChild(primary);
+  const hover = globalThis.figma.createComponent();
+  hover.name = "State=Hover";
+  componentsPage.appendChild(hover);
+  const buttonSet = globalThis.figma.combineAsVariants([primary, hover], componentsPage);
+  buttonSet.name = "Button";
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    pageId: componentsPage.id,
+    name: "Button",
+    nameMatch: "exact",
+    type: ["COMPONENT_SET"],
+  });
+
+  assert.equal(result.summary.pageId, componentsPage.id);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches[0].nodeId, buttonSet.id);
+  assert.equal(result.matches[0].type, "COMPONENT_SET");
+  assert.deepEqual(result.matches[0].path, ["Components", "Button"]);
+}
+
+/** Verifies regex matching, hidden filtering, and limit reporting. */
+async function testFindNodesRegexHiddenAndLimit() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Icon/Add" });
+  const hidden = await handleWriteRequest("create_frame", undefined, { name: "Icon/Remove" });
+  const hiddenNode = await globalThis.figma.getNodeByIdAsync(hidden.nodeId);
+  hiddenNode.visible = false;
+  await handleWriteRequest("create_frame", undefined, { name: "Icon/Edit" });
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    name: "^Icon/",
+    nameMatch: "regex",
+    includeHidden: false,
+    limit: 1,
+  });
+
+  assert.equal(result.summary.totalMatched, 2);
+  assert.equal(result.summary.returned, 1);
+  assert.equal(result.summary.truncated, true);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Icon/Add");
+}
+
+/** Verifies invalid regex filters fail with a structured input error. */
+async function testFindNodesInvalidRegexFails() {
+  globalThis.figma = createMockFigma();
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { name: "[", nameMatch: "regex" }),
+    "INVALID_INPUT",
+    /Invalid name regex/
+  );
+}
+
 /** Verifies failed create steps in a batch do not leave behind unreported root-level nodes. */
 async function testBatchCreateFailureDoesNotLeakNodes() {
   globalThis.figma = createMockFigma();
@@ -1062,6 +1184,11 @@ async function runTests() {
     ["testBatchValidationFailure", testBatchValidationFailure],
     ["testFindNodesJsonQuery", testFindNodesJsonQuery],
     ["testFindNodesQuerySubstringFallback", testFindNodesQuerySubstringFallback],
+    ["testFindNodesDefaultScopeStaysOnCurrentPage", testFindNodesDefaultScopeStaysOnCurrentPage],
+    ["testFindNodesAllPagesTypeFilterIncludesRemotePages", testFindNodesAllPagesTypeFilterIncludesRemotePages],
+    ["testFindNodesPageIdExactComponentSetFilter", testFindNodesPageIdExactComponentSetFilter],
+    ["testFindNodesRegexHiddenAndLimit", testFindNodesRegexHiddenAndLimit],
+    ["testFindNodesInvalidRegexFails", testFindNodesInvalidRegexFails],
     ["testBatchCreateFailureDoesNotLeakNodes", testBatchCreateFailureDoesNotLeakNodes],
     ["testBatchSetStrokesSupportsTmpRef", testBatchSetStrokesSupportsTmpRef],
   ];

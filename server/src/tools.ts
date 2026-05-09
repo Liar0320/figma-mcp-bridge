@@ -377,8 +377,10 @@ export function registerTools(server: McpServer, node: Node): void {
   registerWriteTool("append_children", "Append existing child nodes to a parent.", (args, fileKey) =>
     node.sendWithParams("append_children", undefined, args, fileKey)
   );
-  registerWriteTool("find_nodes", "Find nodes on the current page.", (args, fileKey) =>
-    node.sendWithParams("find_nodes", undefined, args, fileKey)
+  registerWriteTool(
+    "find_nodes",
+    "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Results include pageId, pageName, and path context.",
+    (args, fileKey) => node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
   registerWriteTool("batch_mutation", "Execute write operations in order.", (args, fileKey) =>
     node.sendWithParams("batch_mutation", undefined, args, fileKey)
