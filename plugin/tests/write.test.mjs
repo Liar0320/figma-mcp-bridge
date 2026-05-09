@@ -74,9 +74,13 @@ function createMockFigma() {
     const pageNode = Object.assign(createBaseNode(id, "PAGE", name), {
       type: "PAGE",
       loadAsyncCalls: 0,
+      loadAsyncError: undefined,
       children: [],
       async loadAsync() {
         this.loadAsyncCalls += 1;
+        if (this.loadAsyncError) {
+          throw this.loadAsyncError;
+        }
       },
       appendChild(child) {
         if (child.parent && "children" in child.parent) {
@@ -912,6 +916,58 @@ async function testFindNodesAllPagesTypeFilterIncludesRemotePages() {
   assert.deepEqual(result.matches[0].path, ["Components", "Button / Primary"]);
 }
 
+/** Verifies all-pages search returns partial results when one page cannot load. */
+async function testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const brokenPage = globalThis.figma.createTestPage("Broken Page");
+  brokenPage.loadAsyncError = new Error("Unable to establish connection to Figma after 10 seconds");
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 10,
+  });
+
+  assert.equal(result.summary.scope, "allPages");
+  assert.equal(result.summary.effectiveScope, "allPages");
+  assert.equal(result.summary.pagesLoaded, 2);
+  assert.equal(result.summary.pagesFailed, 1);
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(brokenPage.loadAsyncCalls, 1);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
+  assert.equal(result.summary.totalMatched, 2);
+  assert.equal(result.matches.length, 2);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "PAGE_LOAD_FAILED");
+  assert.equal(result.warnings[0].pageId, brokenPage.id);
+  assert.equal(result.warnings[0].pageName, "Broken Page");
+  assert.match(result.warnings[0].message, /Unable to establish connection/);
+}
+
+/** Verifies pageId load failures are reported as structured page-load errors. */
+async function testFindNodesPageIdLoadFailureIsStructured() {
+  globalThis.figma = createMockFigma();
+
+  const brokenPage = globalThis.figma.createTestPage("Broken Page");
+  brokenPage.loadAsyncError = new Error("Unable to establish connection to Figma after 10 seconds");
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { pageId: brokenPage.id, limit: 1 }),
+    "PAGE_LOAD_FAILED",
+    /Unable to load page 'Broken Page'/
+  );
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(brokenPage.loadAsyncCalls, 1);
+}
+
 /** Verifies pageId, exact matching, and component-set type filters compose. */
 async function testFindNodesPageIdExactComponentSetFilter() {
   globalThis.figma = createMockFigma();
@@ -1209,6 +1265,11 @@ async function runTests() {
     ["testFindNodesQuerySubstringFallback", testFindNodesQuerySubstringFallback],
     ["testFindNodesDefaultScopeStaysOnCurrentPage", testFindNodesDefaultScopeStaysOnCurrentPage],
     ["testFindNodesAllPagesTypeFilterIncludesRemotePages", testFindNodesAllPagesTypeFilterIncludesRemotePages],
+    [
+      "testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings",
+      testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings,
+    ],
+    ["testFindNodesPageIdLoadFailureIsStructured", testFindNodesPageIdLoadFailureIsStructured],
     ["testFindNodesPageIdExactComponentSetFilter", testFindNodesPageIdExactComponentSetFilter],
     ["testFindNodesRegexHiddenAndLimit", testFindNodesRegexHiddenAndLimit],
     ["testFindNodesInvalidRegexFails", testFindNodesInvalidRegexFails],

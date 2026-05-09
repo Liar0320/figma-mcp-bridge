@@ -27,6 +27,14 @@ type FindNodeResult = MutationResult & {
   path: string[];
 };
 
+type FindNodesWarning = {
+  code: "PAGE_LOAD_FAILED";
+  message: string;
+  pageId: string;
+  pageName?: string;
+  details?: unknown;
+};
+
 type FindNodesSummary = {
   scope: "currentPage" | "allPages";
   effectiveScope: "currentPage" | "allPages" | "page";
@@ -36,6 +44,8 @@ type FindNodesSummary = {
   returned: number;
   limit: number;
   truncated: boolean;
+  pagesLoaded?: number;
+  pagesFailed?: number;
 };
 
 type BatchOperation = {
@@ -1166,24 +1176,60 @@ function getFindTypes(
   return undefined;
 }
 
+/** Returns a readable message for unknown Figma runtime failures. */
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Builds a structured warning for page-level load failures during search. */
+function toPageLoadWarning(page: PageNode, error: unknown): FindNodesWarning {
+  const message = getErrorMessage(error);
+  return {
+    code: "PAGE_LOAD_FAILED",
+    message: `Unable to load page '${page.name}' (${page.id}): ${message}`,
+    pageId: page.id,
+    pageName: page.name,
+    details: { message },
+  };
+}
+
 /** Returns the roots to traverse for find_nodes according to scope/page filters. */
-async function getFindRoots(scope: "currentPage" | "allPages", pageId?: string): Promise<PageNode[]> {
+async function getFindRoots(
+  scope: "currentPage" | "allPages",
+  pageId?: string
+): Promise<{ roots: PageNode[]; warnings: FindNodesWarning[] }> {
   if (pageId) {
     const page = await figma.getNodeByIdAsync(pageId);
     if (!page || page.type !== "PAGE") {
       fail("NOT_FOUND", "pageId was not found");
     }
-    await page.loadAsync();
-    return [page];
+    try {
+      await page.loadAsync();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      fail("PAGE_LOAD_FAILED", `Unable to load page '${page.name}' (${page.id}): ${message}`, {
+        pageId: page.id,
+        pageName: page.name,
+        message,
+      });
+    }
+    return { roots: [page], warnings: [] };
   }
   if (scope === "allPages") {
+    const roots: PageNode[] = [];
+    const warnings: FindNodesWarning[] = [];
     const pages = [...figma.root.children] as PageNode[];
     for (const page of pages) {
-      await page.loadAsync();
+      try {
+        await page.loadAsync();
+        roots.push(page);
+      } catch (error) {
+        warnings.push(toPageLoadWarning(page, error));
+      }
     }
-    return pages;
+    return { roots, warnings };
   }
-  return [figma.currentPage];
+  return { roots: [figma.currentPage], warnings: [] };
 }
 
 /** Creates a name matcher for contains, exact, or regex modes. */
@@ -1230,7 +1276,7 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     fail("INVALID_INPUT", "scope must be one of: currentPage, allPages");
   }
   const pageId = getFindString(params, queryFilters, "pageId");
-  const roots = await getFindRoots(scope, pageId);
+  const { roots, warnings } = await getFindRoots(scope, pageId);
   const nodes: SceneNode[] = [];
   for (const root of roots) {
     collectNodes(root, nodes);
@@ -1276,8 +1322,15 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     returned: limited.length,
     limit,
     truncated: matches.length > limited.length,
+    ...(scope === "allPages" && !pageId
+      ? { pagesLoaded: roots.length, pagesFailed: warnings.length }
+      : {}),
   };
-  return { summary, matches: limited.map((node) => toFindNodeResult(node)) };
+  return {
+    summary,
+    matches: limited.map((node) => toFindNodeResult(node)),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 /** Deletes a current-page node and reports its id. */
