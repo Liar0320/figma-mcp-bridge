@@ -956,6 +956,86 @@ async function testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings() {
   assert.match(result.warnings[0].message, /Unable to establish connection/);
 }
 
+/** Verifies all-pages search stops before the bridge timeout and returns partial results. */
+async function testFindNodesAllPagesStopsAtTimeBudgetWithWarning() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Current Page Node" });
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+  const thirdPage = globalThis.figma.createTestPage("Third Page");
+  const fourthPage = globalThis.figma.createTestPage("Fourth Page");
+
+  let now = 0;
+  const originalNow = Date.now;
+  Date.now = () => {
+    now += 11_000;
+    return now;
+  };
+  try {
+    const result = await handleWriteRequest("find_nodes", undefined, {
+      scope: "allPages",
+      name: "Definitely Missing",
+      nameMatch: "exact",
+      limit: 10,
+    });
+
+    assert.equal(result.summary.scope, "allPages");
+    assert.equal(result.summary.effectiveScope, "allPages");
+    assert.equal(result.summary.pagesLoaded, 1);
+    assert.equal(result.summary.pagesFailed, 0);
+    assert.equal(result.summary.pagesSkipped, 3);
+    assert.equal(result.summary.complete, false);
+    assert.equal(result.summary.truncated, true);
+    assert.equal(result.summary.totalMatched, 0);
+    assert.equal(result.matches.length, 0);
+    assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+    assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+    assert.equal(secondPage.loadAsyncCalls, 0);
+    assert.equal(thirdPage.loadAsyncCalls, 0);
+    assert.equal(fourthPage.loadAsyncCalls, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(result.warnings[0].code, "SKIPPED_TIME_BUDGET");
+    assert.equal(result.warnings[0].details.pagesScanned, 1);
+    assert.equal(result.warnings[0].details.pagesSkipped, 3);
+    assert.equal(result.warnings[0].details.maxDurationMs, 20_000);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+/** Verifies all-pages search can stop early when the requested limit is satisfied. */
+async function testFindNodesAllPagesStopsWhenLimitSatisfied() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+  const thirdPage = globalThis.figma.createTestPage("Third Page");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  secondPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesFailed, 0);
+  assert.equal(result.summary.pagesSkipped, 2);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.truncated, true);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button Current");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(secondPage.loadAsyncCalls, 0);
+  assert.equal(thirdPage.loadAsyncCalls, 0);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
+}
+
 /** Verifies pageId load failures are reported as structured page-load errors. */
 async function testFindNodesPageIdLoadFailureIsStructured() {
   globalThis.figma = createMockFigma();
@@ -1332,6 +1412,11 @@ async function runTests() {
       "testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings",
       testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings,
     ],
+    [
+      "testFindNodesAllPagesStopsAtTimeBudgetWithWarning",
+      testFindNodesAllPagesStopsAtTimeBudgetWithWarning,
+    ],
+    ["testFindNodesAllPagesStopsWhenLimitSatisfied", testFindNodesAllPagesStopsWhenLimitSatisfied],
     ["testFindNodesPageIdLoadFailureIsStructured", testFindNodesPageIdLoadFailureIsStructured],
     ["testFindNodesPageIdResolveFailureIsStructured", testFindNodesPageIdResolveFailureIsStructured],
     [

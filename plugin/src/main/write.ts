@@ -3,6 +3,7 @@ import { serializeNode } from "./serializer";
 const PLUGIN_NS = "codex";
 const MANAGED_KEY = "managed";
 const NODE_KEY = "key";
+const FIND_NODES_ALL_PAGES_MAX_DURATION_MS = 20_000;
 
 type RequestParams = Record<string, unknown> | undefined;
 
@@ -29,7 +30,7 @@ type FindNodeResult = Omit<MutationResult, "node"> & {
 };
 
 type FindNodesWarning = {
-  code: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED";
+  code: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED" | "SKIPPED_TIME_BUDGET" | "SKIPPED_LIMIT";
   message: string;
   pageId?: string;
   pageName?: string;
@@ -51,6 +52,8 @@ type FindNodesSummary = {
   truncated: boolean;
   pagesLoaded?: number;
   pagesFailed?: number;
+  pagesSkipped?: number;
+  complete?: boolean;
 };
 
 type BatchOperation = {
@@ -1237,6 +1240,39 @@ function toPageLoadWarning(page: PageNode, error: unknown): FindNodesWarning {
   };
 }
 
+/** Builds a structured warning when all-pages search stops before scanning every page. */
+function toSkippedPagesWarning(
+  code: "SKIPPED_TIME_BUDGET" | "SKIPPED_LIMIT",
+  details: Record<string, unknown>
+): FindNodesWarning {
+  const message =
+    code === "SKIPPED_TIME_BUDGET"
+      ? "Stopped all-pages search before bridge timeout; some pages were not scanned."
+      : "Stopped all-pages search after the result limit was satisfied; some pages were not scanned.";
+  return { code, message, details };
+}
+
+/** Returns true when a node matches the find_nodes filters. */
+function matchesFindFilters(
+  node: SceneNode,
+  filters: {
+    includeHidden: boolean;
+    nodeId?: string;
+    types?: string[];
+    key?: string;
+    parentId?: string;
+    nameMatcher?: (node: SceneNode) => boolean;
+  }
+): boolean {
+  if (!filters.includeHidden && node.visible === false) return false;
+  if (filters.nodeId && node.id !== filters.nodeId) return false;
+  if (filters.types?.length && !filters.types.includes(node.type)) return false;
+  if (filters.key && getPluginKey(node) !== filters.key) return false;
+  if (filters.parentId && node.parent?.id !== filters.parentId) return false;
+  if (filters.nameMatcher && !filters.nameMatcher(node)) return false;
+  return true;
+}
+
 /** Returns the roots to traverse for find_nodes according to scope/page filters. */
 async function getFindRoots(
   scope: "currentPage" | "allPages",
@@ -1303,6 +1339,94 @@ function createNameMatcher(value: string, mode: "contains" | "exact" | "regex"):
   return (node) => node.name.includes(value);
 }
 
+/** Scans all pages incrementally so cold dynamic-page loads can return partial results before bridge timeout. */
+async function findNodesAcrossAllPages(
+  filters: Parameters<typeof matchesFindFilters>[1],
+  limit: number,
+  maxDurationMs = FIND_NODES_ALL_PAGES_MAX_DURATION_MS
+): Promise<{
+  nodes: SceneNode[];
+  totalScanned: number;
+  totalMatched: number;
+  pagesLoaded: number;
+  pagesFailed: number;
+  pagesSkipped: number;
+  complete: boolean;
+  startedAt: number;
+  maxDurationMs: number;
+  warnings: FindNodesWarning[];
+}> {
+  const startedAt = Date.now();
+  const pages = [...figma.root.children] as PageNode[];
+  const nodes: SceneNode[] = [];
+  const warnings: FindNodesWarning[] = [];
+  let totalScanned = 0;
+  let totalMatched = 0;
+  let pagesLoaded = 0;
+  let pagesFailed = 0;
+  let pagesVisited = 0;
+  let stopReason: "timeBudget" | "limit" | undefined;
+
+  for (const page of pages) {
+    if (Date.now() - startedAt >= maxDurationMs) {
+      stopReason = "timeBudget";
+      break;
+    }
+    pagesVisited += 1;
+    try {
+      await page.loadAsync();
+      pagesLoaded += 1;
+    } catch (error) {
+      pagesFailed += 1;
+      warnings.push(toPageLoadWarning(page, error));
+      continue;
+    }
+
+    const pageNodes: SceneNode[] = [];
+    collectNodes(page, pageNodes);
+    totalScanned += pageNodes.length;
+    for (const node of pageNodes) {
+      if (!matchesFindFilters(node, filters)) continue;
+      totalMatched += 1;
+      if (nodes.length < limit) {
+        nodes.push(node);
+      }
+    }
+
+    if (nodes.length >= limit) {
+      stopReason = "limit";
+      break;
+    }
+  }
+
+  const pagesSkipped = Math.max(0, pages.length - pagesVisited);
+  const complete = pagesSkipped === 0;
+  if (pagesSkipped > 0) {
+    warnings.push(
+      toSkippedPagesWarning(stopReason === "timeBudget" ? "SKIPPED_TIME_BUDGET" : "SKIPPED_LIMIT", {
+        maxDurationMs,
+        pagesScanned: pagesVisited,
+        pagesLoaded,
+        pagesFailed,
+        pagesSkipped,
+      })
+    );
+  }
+
+  return {
+    nodes,
+    totalScanned,
+    totalMatched,
+    pagesLoaded,
+    pagesFailed,
+    pagesSkipped,
+    complete,
+    startedAt,
+    maxDurationMs,
+    warnings,
+  };
+}
+
 /** Finds nodes by id, name, plugin key, parent id, type, page, and scope. */
 async function findNodes(params: RequestParams): Promise<unknown> {
   const rawQuery = getOptionalString(params?.query);
@@ -1329,13 +1453,6 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     fail("INVALID_INPUT", "scope must be one of: currentPage, allPages");
   }
   const pageId = getFindString(params, queryFilters, "pageId");
-  const { roots, warnings } = await getFindRoots(scope, pageId);
-  const nodes: SceneNode[] = [];
-  for (const root of roots) {
-    collectNodes(root, nodes);
-  }
-
-  let matches = nodes;
   const nodeId = getFindString(params, queryFilters, "nodeId");
   const name = getFindString(params, queryFilters, "name");
   const key = getFindString(params, queryFilters, "key");
@@ -1353,40 +1470,85 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     fail("INVALID_INPUT", "limit must be a positive integer");
   }
   const limit = Math.min(rawLimit, 500);
-
-  if (!includeHidden) matches = matches.filter((node) => node.visible !== false);
-  if (nodeId) matches = matches.filter((node) => node.id === nodeId);
-  if (types?.length) matches = matches.filter((node) => types.includes(node.type));
-  if (key) matches = matches.filter((node) => getPluginKey(node) === key);
-  if (parentId) matches = matches.filter((node) => node.parent?.id === parentId);
   const effectiveName = name ?? nameSubstring;
-  if (effectiveName) {
-    const matcher = createNameMatcher(effectiveName, name ? nameMatch : "contains");
-    matches = matches.filter(matcher);
+  const nameMatcher = effectiveName ? createNameMatcher(effectiveName, name ? nameMatch : "contains") : undefined;
+  const filters = { includeHidden, nodeId, types, key, parentId, nameMatcher };
+
+  let warnings: FindNodesWarning[] = [];
+  let limited: SceneNode[] = [];
+  let totalScanned = 0;
+  let totalMatched = 0;
+  let allPagesStats: Pick<FindNodesSummary, "pagesLoaded" | "pagesFailed" | "pagesSkipped" | "complete"> | undefined;
+  let allPagesStartedAt: number | undefined;
+  let allPagesMaxDurationMs: number | undefined;
+
+  if (scope === "allPages" && !pageId) {
+    const result = await findNodesAcrossAllPages(filters, limit);
+    limited = result.nodes;
+    totalScanned = result.totalScanned;
+    totalMatched = result.totalMatched;
+    warnings = result.warnings;
+    allPagesStats = {
+      pagesLoaded: result.pagesLoaded,
+      pagesFailed: result.pagesFailed,
+      pagesSkipped: result.pagesSkipped,
+      complete: result.complete,
+    };
+    allPagesStartedAt = result.startedAt;
+    allPagesMaxDurationMs = result.maxDurationMs;
+  } else {
+    const rootsResult = await getFindRoots(scope, pageId);
+    warnings = rootsResult.warnings;
+    const nodes: SceneNode[] = [];
+    for (const root of rootsResult.roots) {
+      collectNodes(root, nodes);
+    }
+    totalScanned = nodes.length;
+    const matches = nodes.filter((node) => matchesFindFilters(node, filters));
+    totalMatched = matches.length;
+    limited = matches.slice(0, limit);
   }
 
-  const limited = matches.slice(0, limit);
+  const complete = allPagesStats?.complete ?? true;
   const summary: FindNodesSummary = {
     scope,
     effectiveScope: pageId ? "page" : scope,
     pageId,
-    totalScanned: nodes.length,
-    totalMatched: matches.length,
+    totalScanned,
+    totalMatched,
     returned: limited.length,
     limit,
-    truncated: matches.length > limited.length,
-    ...(scope === "allPages" && !pageId
-      ? { pagesLoaded: roots.length, pagesFailed: warnings.length }
-      : {}),
+    truncated: totalMatched > limited.length || !complete,
+    ...(allPagesStats ?? {}),
   };
   const serializedMatches: FindNodeResult[] = [];
   const serializeWarnings: FindNodesWarning[] = [];
   for (const node of limited) {
+    if (
+      allPagesStartedAt !== undefined &&
+      allPagesMaxDurationMs !== undefined &&
+      Date.now() - allPagesStartedAt >= allPagesMaxDurationMs
+    ) {
+      if (!warnings.some((warning) => warning.code === "SKIPPED_TIME_BUDGET")) {
+        serializeWarnings.push(
+          toSkippedPagesWarning("SKIPPED_TIME_BUDGET", {
+            maxDurationMs: allPagesMaxDurationMs,
+            serializedMatches: serializedMatches.length,
+            skippedMatches: limited.length - serializedMatches.length,
+          })
+        );
+      }
+      break;
+    }
     const serialized = toFindNodeResultSafe(node);
     serializedMatches.push(serialized.result);
     if (serialized.warning) {
       serializeWarnings.push(serialized.warning);
     }
+  }
+  summary.returned = serializedMatches.length;
+  if (serializedMatches.length < limited.length) {
+    summary.truncated = true;
   }
   const responseWarnings = [...warnings, ...serializeWarnings];
   return {
