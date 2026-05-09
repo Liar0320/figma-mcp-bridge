@@ -29,6 +29,7 @@ type FindNodeResult = MutationResult & {
 
 type FindNodesSummary = {
   scope: "currentPage" | "allPages";
+  effectiveScope: "currentPage" | "allPages" | "page";
   pageId?: string;
   totalScanned: number;
   totalMatched: number;
@@ -1168,16 +1169,19 @@ function getFindTypes(
 /** Returns the roots to traverse for find_nodes according to scope/page filters. */
 async function getFindRoots(scope: "currentPage" | "allPages", pageId?: string): Promise<PageNode[]> {
   if (pageId) {
-    await figma.loadAllPagesAsync?.();
     const page = await figma.getNodeByIdAsync(pageId);
     if (!page || page.type !== "PAGE") {
       fail("NOT_FOUND", "pageId was not found");
     }
-    return [page as PageNode];
+    await page.loadAsync();
+    return [page];
   }
   if (scope === "allPages") {
-    await figma.loadAllPagesAsync?.();
-    return [...figma.root.children] as PageNode[];
+    const pages = [...figma.root.children] as PageNode[];
+    for (const page of pages) {
+      await page.loadAsync();
+    }
+    return pages;
   }
   return [figma.currentPage];
 }
@@ -1265,6 +1269,7 @@ async function findNodes(params: RequestParams): Promise<unknown> {
   const limited = matches.slice(0, limit);
   const summary: FindNodesSummary = {
     scope,
+    effectiveScope: pageId ? "page" : scope,
     pageId,
     totalScanned: nodes.length,
     totalMatched: matches.length,

@@ -54,6 +54,7 @@ function createBaseNode(id, type, name) {
 /** Builds a mock `figma` runtime that is sufficient for write-tool tests. */
 function createMockFigma() {
   let nextId = 1;
+  let loadAllPagesAsyncCalls = 0;
   const registry = new Map();
   const createNodeId = () => `1:${nextId++}`;
 
@@ -72,7 +73,11 @@ function createMockFigma() {
   const createPageNode = (id, name) => {
     const pageNode = Object.assign(createBaseNode(id, "PAGE", name), {
       type: "PAGE",
+      loadAsyncCalls: 0,
       children: [],
+      async loadAsync() {
+        this.loadAsyncCalls += 1;
+      },
       appendChild(child) {
         if (child.parent && "children" in child.parent) {
           child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
@@ -317,7 +322,12 @@ function createMockFigma() {
     async getNodeByIdAsync(nodeId) {
       return registry.get(nodeId) ?? null;
     },
-    async loadAllPagesAsync() {},
+    get loadAllPagesAsyncCalls() {
+      return loadAllPagesAsyncCalls;
+    },
+    async loadAllPagesAsync() {
+      loadAllPagesAsyncCalls += 1;
+    },
     async loadFontAsync() {},
   };
 }
@@ -862,6 +872,10 @@ async function testFindNodesDefaultScopeStaysOnCurrentPage() {
   const result = await handleWriteRequest("find_nodes", undefined, { name: "Button" });
 
   assert.equal(result.summary.scope, "currentPage");
+  assert.equal(result.summary.effectiveScope, "currentPage");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(componentsPage.loadAsyncCalls, 0);
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].name, "Button Current");
   assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
@@ -885,6 +899,10 @@ async function testFindNodesAllPagesTypeFilterIncludesRemotePages() {
   });
 
   assert.equal(result.summary.scope, "allPages");
+  assert.equal(result.summary.effectiveScope, "allPages");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
   assert.equal(result.summary.totalMatched, 1);
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].type, "COMPONENT");
@@ -915,7 +933,12 @@ async function testFindNodesPageIdExactComponentSetFilter() {
     type: ["COMPONENT_SET"],
   });
 
+  assert.equal(result.summary.scope, "currentPage");
+  assert.equal(result.summary.effectiveScope, "page");
   assert.equal(result.summary.pageId, componentsPage.id);
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
   assert.equal(result.summary.totalMatched, 1);
   assert.equal(result.matches[0].nodeId, buttonSet.id);
   assert.equal(result.matches[0].type, "COMPONENT_SET");
