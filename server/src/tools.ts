@@ -379,7 +379,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "find_nodes",
-    "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Results include pageId, pageName, and path context.",
+    "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Results include pageId, pageName, path context, and a summary; allPages searches may return partial results when summary.complete=false.",
     (args, fileKey) => node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
   registerWriteTool("batch_mutation", "Execute write operations in order.", (args, fileKey) =>

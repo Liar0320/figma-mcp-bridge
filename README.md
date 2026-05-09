@@ -91,7 +91,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `create_text` | Create a text node on the current page |
 | `create_rectangle` | Create a rectangle on the current page |
 | `append_children` | Re-parent existing child nodes under a parent |
-| `find_nodes` | Find nodes on the current page by ID, name, key, or parent |
+| `find_nodes` | Find nodes on the current page by default, or across all pages / a specific page with filters; `allPages` may return partial results |
 | `set_position` | Set node position |
 | `set_size` | Set node size |
 | `set_fills` | Set node fills using supported solid paints |
@@ -112,6 +112,80 @@ Write tools are intentionally scoped to the current page and a deterministic sub
 All Figma-backed tools accept an optional `fileKey`. When exactly one plugin instance is connected, tools remain backward compatible and can omit `fileKey`. When multiple Figma files/plugin instances are connected, tool calls fail closed unless the caller supplies a `fileKey`; call `list_files` first and pass the desired file's `fileKey` to read, screenshot, token, and write tools. Unsaved Figma files use a plugin-session fallback key so simultaneous `Untitled` files are still distinguishable.
 
 Within `batch_mutation`, temporary references must use the `tmp:` prefix, for example `ref: "tmp:modal"` and `nodeId: "tmp:modal"`. Bare labels like `"modal"` are treated as literal node IDs and are not resolved as batch refs.
+
+### `find_nodes` partial-result contract
+
+`find_nodes` returns a response shaped like `{ "summary": { ... }, "matches": [ ... ] }`, with optional `warnings` when warning conditions occur. Current-page and explicit `pageId` searches are complete unless the tool returns an error. `scope: "allPages"` scans pages incrementally and may stop early to keep the bridge responsive, so callers must inspect `summary.complete` before treating counts as full-file totals:
+
+- `summary.complete: true` means every targeted page was scanned.
+- `summary.complete: false` means the result is partial.
+- When partial, `summary.totalMatched` only counts matches found in scanned pages and scanned node ranges. It is not a full-file total.
+- `summary.pagesLoaded`, `summary.pagesFailed`, and `summary.pagesSkipped` describe page-level progress for all-pages scans.
+- Warning codes are stable machine-readable signals:
+  - `PAGE_LOAD_FAILED`: a page could not be loaded and was not scanned.
+  - `NODE_SERIALIZE_FAILED`: a matching node was found, but part of the node summary could not be serialized.
+  - `SKIPPED_LIMIT`: scanning stopped after enough matches were found to satisfy `limit`; later pages were not scanned.
+  - `SKIPPED_TIME_BUDGET`: scanning or serialization stopped when the search time budget was reached, before the outer bridge request timed out; remaining pages or matches were not scanned/serialized.
+
+Complete all-pages result example:
+
+```json
+{
+  "summary": {
+    "scope": "allPages",
+    "effectiveScope": "allPages",
+    "totalScanned": 42,
+    "totalMatched": 2,
+    "returned": 2,
+    "limit": 100,
+    "truncated": false,
+    "pagesLoaded": 3,
+    "pagesFailed": 0,
+    "pagesSkipped": 0,
+    "complete": true
+  },
+  "matches": [
+    { "nodeId": "12:34", "name": "Primary Button", "type": "COMPONENT", "pageId": "1:1", "pageName": "Components", "path": ["Components", "Buttons", "Primary Button"] },
+    { "nodeId": "12:56", "name": "Secondary Button", "type": "COMPONENT", "pageId": "1:1", "pageName": "Components", "path": ["Components", "Buttons", "Secondary Button"] }
+  ]
+}
+```
+
+Partial all-pages result example:
+
+```json
+{
+  "summary": {
+    "scope": "allPages",
+    "effectiveScope": "allPages",
+    "totalScanned": 25,
+    "totalMatched": 1,
+    "returned": 1,
+    "limit": 100,
+    "truncated": true,
+    "pagesLoaded": 1,
+    "pagesFailed": 1,
+    "pagesSkipped": 2,
+    "complete": false
+  },
+  "matches": [
+    { "nodeId": "22:10", "name": "Card", "type": "FRAME", "pageId": "2:1", "pageName": "Home", "path": ["Home", "Card"] }
+  ],
+  "warnings": [
+    {
+      "code": "PAGE_LOAD_FAILED",
+      "message": "Unable to load page 'Archive' (3:1): page unavailable",
+      "pageId": "3:1",
+      "pageName": "Archive"
+    },
+    {
+      "code": "SKIPPED_TIME_BUDGET",
+      "message": "Stopped all-pages search before bridge timeout; some pages were not scanned.",
+      "details": { "pagesLoaded": 1, "pagesFailed": 1, "pagesSkipped": 2 }
+    }
+  ]
+}
+```
 
 ## Design Tokens
 
