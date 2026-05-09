@@ -3,6 +3,7 @@ import { serializeNode } from "./serializer";
 const PLUGIN_NS = "codex";
 const MANAGED_KEY = "managed";
 const NODE_KEY = "key";
+const FIND_NODES_ALL_PAGES_MAX_DURATION_MS = 20_000;
 
 type RequestParams = Record<string, unknown> | undefined;
 
@@ -19,6 +20,40 @@ type MutationResult = {
   parentId?: string;
   key?: string;
   node: ReturnType<typeof serializeNode>;
+};
+
+type FindNodeResult = Omit<MutationResult, "node"> & {
+  node?: ReturnType<typeof serializeNode>;
+  pageId?: string;
+  pageName?: string;
+  path: string[];
+};
+
+type FindNodesWarning = {
+  code: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED" | "SKIPPED_TIME_BUDGET" | "SKIPPED_LIMIT";
+  message: string;
+  pageId?: string;
+  pageName?: string;
+  nodeId?: string;
+  nodeName?: string;
+  nodeType?: string;
+  field?: string;
+  details?: unknown;
+};
+
+type FindNodesSummary = {
+  scope: "currentPage" | "allPages";
+  effectiveScope: "currentPage" | "allPages" | "page";
+  pageId?: string;
+  totalScanned: number;
+  totalMatched: number;
+  returned: number;
+  limit: number;
+  truncated: boolean;
+  pagesLoaded?: number;
+  pagesFailed?: number;
+  pagesSkipped?: number;
+  complete?: boolean;
 };
 
 type BatchOperation = {
@@ -465,6 +500,30 @@ function validateWriteToolParams(
       getOptionalNonEmptyString(params?.name, "name");
       getOptionalNonEmptyString(params?.key, "key");
       getOptionalFigmaNodeId(params?.parentId, "parentId");
+      if (params?.scope !== undefined) {
+        validateEnum(params.scope, "scope", ["currentPage", "allPages"]);
+      }
+      getOptionalFigmaNodeId(params?.pageId, "pageId");
+      if (params?.nameMatch !== undefined) {
+        validateEnum(params.nameMatch, "nameMatch", ["contains", "exact", "regex"]);
+      }
+      if (params?.type !== undefined && typeof params.type !== "string" && !Array.isArray(params.type)) {
+        fail("INVALID_INPUT", "type must be a string or an array of strings");
+      }
+      if (Array.isArray(params?.type)) {
+        for (const [index, type] of params.type.entries()) {
+          if (typeof type !== "string" || type.length === 0) {
+            fail("INVALID_INPUT", `type[${index}] must be a non-empty string`);
+          }
+        }
+      }
+      if (params?.limit !== undefined) {
+        const limit = getPositiveNumber(params.limit, "limit");
+        if (!Number.isInteger(limit)) fail("INVALID_INPUT", "limit must be an integer");
+      }
+      if (params?.includeHidden !== undefined && typeof params.includeHidden !== "boolean") {
+        fail("INVALID_INPUT", "includeHidden must be a boolean");
+      }
       return;
     case "delete_node":
       getFigmaNodeId(merged.nodeId, "nodeId");
@@ -1052,11 +1111,342 @@ function collectNodes(root: ChildrenMixin, acc: SceneNode[]): void {
   }
 }
 
-/** Finds current-page nodes by id, name, plugin key, or parent id. */
-async function findNodes(params: RequestParams): Promise<unknown> {
+/** Recursively scans find_nodes matches and stops as soon as the requested limit is satisfied. */
+function scanFindNodesUntilLimit(
+  root: ChildrenMixin,
+  filters: Parameters<typeof matchesFindFilters>[1],
+  limit: number,
+  matches: SceneNode[]
+): { scanned: number; matched: number; limitReached: boolean } {
+  let scanned = 0;
+  let matched = 0;
+
+  for (const child of root.children) {
+    scanned += 1;
+    if (matchesFindFilters(child, filters)) {
+      matched += 1;
+      matches.push(child);
+      if (matches.length >= limit) {
+        return { scanned, matched, limitReached: true };
+      }
+    }
+    if ("children" in child) {
+      const result = scanFindNodesUntilLimit(child, filters, limit, matches);
+      scanned += result.scanned;
+      matched += result.matched;
+      if (result.limitReached) {
+        return { scanned, matched, limitReached: true };
+      }
+    }
+  }
+
+  return { scanned, matched, limitReached: false };
+}
+
+/** Returns the page owning a node, if it has one. */
+function getNodePage(node: BaseNode): PageNode | undefined {
+  let current: BaseNode | null = node;
+  while (current && current.type !== "PAGE" && current.parent) {
+    current = current.parent;
+  }
+  return current?.type === "PAGE" ? current : undefined;
+}
+
+/** Builds a readable path from the page to a node. */
+function getNodePath(node: BaseNode): string[] {
+  const names: string[] = [];
+  let current: BaseNode | null = node;
+  while (current && current.type !== "DOCUMENT") {
+    names.unshift(current.name);
+    current = current.parent;
+  }
+  return names;
+}
+
+/** Builds the enriched payload returned for find_nodes matches. */
+function toFindNodeResult(node: SceneNode): FindNodeResult {
+  const page = getNodePage(node);
+  return {
+    ...toMutationResult(node),
+    pageId: page?.id,
+    pageName: page?.name,
+    path: getNodePath(node),
+  };
+}
+
+/** Builds minimal find_nodes metadata without deep node serialization. */
+function toMinimalFindNodeResult(node: SceneNode): FindNodeResult {
+  const page = getNodePage(node);
+  return {
+    nodeId: node.id,
+    type: node.type,
+    name: node.name,
+    parentId: node.parent && node.parent.type !== "DOCUMENT" ? node.parent.id : undefined,
+    key: getPluginKey(node),
+    pageId: page?.id,
+    pageName: page?.name,
+    path: getNodePath(node),
+  };
+}
+
+/** Serializes a find_nodes match, falling back to minimal metadata if deep serialization fails. */
+function toFindNodeResultSafe(node: SceneNode): { result: FindNodeResult; warning?: FindNodesWarning } {
+  try {
+    return { result: toFindNodeResult(node) };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    const result = toMinimalFindNodeResult(node);
+    return {
+      result,
+      warning: {
+        code: "NODE_SERIALIZE_FAILED",
+        message: `Unable to serialize node '${node.name}' (${node.id}): ${message}`,
+        nodeId: node.id,
+        nodeName: node.name,
+        nodeType: node.type,
+        pageId: result.pageId,
+        pageName: result.pageName,
+        field: "node",
+        details: { message },
+      },
+    };
+  }
+}
+
+/** Reads a string filter from direct params or the legacy JSON query object. */
+function getFindString(
+  params: RequestParams,
+  queryFilters: Record<string, unknown> | undefined,
+  field: string
+): string | undefined {
+  return getOptionalString(params?.[field]) ?? getOptionalString(queryFilters?.[field]);
+}
+
+/** Reads a numeric filter from direct params or the legacy JSON query object. */
+function getFindNumber(
+  params: RequestParams,
+  queryFilters: Record<string, unknown> | undefined,
+  field: string
+): number | undefined {
+  const value = params?.[field] ?? queryFilters?.[field];
+  return typeof value === "number" ? value : undefined;
+}
+
+/** Reads a boolean filter from direct params or the legacy JSON query object. */
+function getFindBoolean(
+  params: RequestParams,
+  queryFilters: Record<string, unknown> | undefined,
+  field: string
+): boolean | undefined {
+  const value = params?.[field] ?? queryFilters?.[field];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+/** Reads a node type filter from direct params or the legacy JSON query object. */
+function getFindTypes(
+  params: RequestParams,
+  queryFilters: Record<string, unknown> | undefined
+): string[] | undefined {
+  const value = params?.type ?? queryFilters?.type;
+  if (typeof value === "string" && value.length > 0) return [value];
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  }
+  return undefined;
+}
+
+/** Returns a readable message for unknown Figma runtime failures. */
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Builds a structured warning for page-level load failures during search. */
+function toPageLoadWarning(page: PageNode, error: unknown): FindNodesWarning {
+  const message = getErrorMessage(error);
+  return {
+    code: "PAGE_LOAD_FAILED",
+    message: `Unable to load page '${page.name}' (${page.id}): ${message}`,
+    pageId: page.id,
+    pageName: page.name,
+    details: { message },
+  };
+}
+
+/** Builds a structured warning when all-pages search stops before scanning every page. */
+function toSkippedPagesWarning(
+  code: "SKIPPED_TIME_BUDGET" | "SKIPPED_LIMIT",
+  details: Record<string, unknown>
+): FindNodesWarning {
+  const message =
+    code === "SKIPPED_TIME_BUDGET"
+      ? "Stopped all-pages search before bridge timeout; some pages were not scanned."
+      : "Stopped all-pages search after the result limit was satisfied; some pages were not scanned.";
+  return { code, message, details };
+}
+
+/** Returns true when a node matches the find_nodes filters. */
+function matchesFindFilters(
+  node: SceneNode,
+  filters: {
+    includeHidden: boolean;
+    nodeId?: string;
+    types?: string[];
+    key?: string;
+    parentId?: string;
+    nameMatcher?: (node: SceneNode) => boolean;
+  }
+): boolean {
+  if (!filters.includeHidden && node.visible === false) return false;
+  if (filters.nodeId && node.id !== filters.nodeId) return false;
+  if (filters.types?.length && !filters.types.includes(node.type)) return false;
+  if (filters.key && getPluginKey(node) !== filters.key) return false;
+  if (filters.parentId && node.parent?.id !== filters.parentId) return false;
+  if (filters.nameMatcher && !filters.nameMatcher(node)) return false;
+  return true;
+}
+
+/** Returns the roots to traverse for current-page/pageId find_nodes searches. */
+async function getFindRoots(
+  scope: "currentPage" | "allPages",
+  pageId?: string
+): Promise<{ roots: PageNode[]; warnings: FindNodesWarning[] }> {
+  if (pageId) {
+    let page: BaseNode | null;
+    try {
+      page = await figma.getNodeByIdAsync(pageId);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      fail("PAGE_RESOLVE_FAILED", `Unable to resolve page '${pageId}': ${message}`, {
+        pageId,
+        message,
+      });
+    }
+    if (!page || page.type !== "PAGE") {
+      fail("NOT_FOUND", "pageId was not found");
+    }
+    try {
+      await page.loadAsync();
+    } catch (error) {
+      const message = getErrorMessage(error);
+      fail("PAGE_LOAD_FAILED", `Unable to load page '${page.name}' (${page.id}): ${message}`, {
+        pageId: page.id,
+        pageName: page.name,
+        message,
+      });
+    }
+    return { roots: [page], warnings: [] };
+  }
+  if (scope === "allPages") {
+    fail("INVALID_INPUT", "allPages find_nodes searches must use the bounded incremental scanner");
+  }
+  return { roots: [figma.currentPage], warnings: [] };
+}
+
+/** Creates a name matcher for contains, exact, or regex modes. */
+function createNameMatcher(value: string, mode: "contains" | "exact" | "regex"): (node: SceneNode) => boolean {
+  if (mode === "exact") {
+    return (node) => node.name === value;
+  }
+  if (mode === "regex") {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(value);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail("INVALID_INPUT", `Invalid name regex: ${message}`);
+    }
+    return (node) => pattern.test(node.name);
+  }
+  return (node) => node.name.includes(value);
+}
+
+/** Scans all pages incrementally so cold dynamic-page loads can return partial results before bridge timeout. */
+async function findNodesAcrossAllPages(
+  filters: Parameters<typeof matchesFindFilters>[1],
+  limit: number,
+  maxDurationMs = FIND_NODES_ALL_PAGES_MAX_DURATION_MS
+): Promise<{
+  nodes: SceneNode[];
+  totalScanned: number;
+  totalMatched: number;
+  pagesLoaded: number;
+  pagesFailed: number;
+  pagesSkipped: number;
+  complete: boolean;
+  startedAt: number;
+  maxDurationMs: number;
+  warnings: FindNodesWarning[];
+}> {
+  const startedAt = Date.now();
+  const pages = [...figma.root.children] as PageNode[];
   const nodes: SceneNode[] = [];
-  collectNodes(figma.currentPage, nodes);
-  let matches = nodes;
+  const warnings: FindNodesWarning[] = [];
+  let totalScanned = 0;
+  let totalMatched = 0;
+  let pagesLoaded = 0;
+  let pagesFailed = 0;
+  let pagesVisited = 0;
+  let stopReason: "timeBudget" | "limit" | undefined;
+
+  for (const page of pages) {
+    if (Date.now() - startedAt >= maxDurationMs) {
+      stopReason = "timeBudget";
+      break;
+    }
+    pagesVisited += 1;
+    try {
+      await page.loadAsync();
+      pagesLoaded += 1;
+    } catch (error) {
+      pagesFailed += 1;
+      warnings.push(toPageLoadWarning(page, error));
+      continue;
+    }
+
+    if (Date.now() - startedAt >= maxDurationMs) {
+      stopReason = "timeBudget";
+      break;
+    }
+
+    const result = scanFindNodesUntilLimit(page, filters, limit, nodes);
+    totalScanned += result.scanned;
+    totalMatched += result.matched;
+    if (result.limitReached) {
+      stopReason = "limit";
+      break;
+    }
+  }
+
+  const pagesSkipped = Math.max(0, pages.length - pagesVisited);
+  const complete = stopReason === undefined && pagesSkipped === 0;
+  if (!complete) {
+    warnings.push(
+      toSkippedPagesWarning(stopReason === "timeBudget" ? "SKIPPED_TIME_BUDGET" : "SKIPPED_LIMIT", {
+        maxDurationMs,
+        pagesScanned: pagesVisited,
+        pagesLoaded,
+        pagesFailed,
+        pagesSkipped,
+      })
+    );
+  }
+
+  return {
+    nodes,
+    totalScanned,
+    totalMatched,
+    pagesLoaded,
+    pagesFailed,
+    pagesSkipped,
+    complete,
+    startedAt,
+    maxDurationMs,
+    warnings,
+  };
+}
+
+/** Finds nodes by id, name, plugin key, parent id, type, page, and scope. */
+async function findNodes(params: RequestParams): Promise<unknown> {
   const rawQuery = getOptionalString(params?.query);
   let queryFilters: Record<string, unknown> | undefined;
   let nameSubstring: string | undefined;
@@ -1074,19 +1464,116 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     }
   }
 
-  const nodeId = getOptionalString(params?.nodeId) ?? getOptionalString(queryFilters?.nodeId);
-  const name = getOptionalString(params?.name) ?? getOptionalString(queryFilters?.name);
-  const key = getOptionalString(params?.key) ?? getOptionalString(queryFilters?.key);
-  const parentId =
-    getOptionalString(params?.parentId) ?? getOptionalString(queryFilters?.parentId);
-  if (nodeId) matches = matches.filter((node) => node.id === nodeId);
-  if (name) matches = matches.filter((node) => node.name === name);
-  if (key) matches = matches.filter((node) => getPluginKey(node) === key);
-  if (parentId) matches = matches.filter((node) => node.parent?.id === parentId);
-  if (nameSubstring) {
-    matches = matches.filter((node) => node.name.includes(nameSubstring));
+  const scope =
+    (getFindString(params, queryFilters, "scope") as "currentPage" | "allPages" | undefined) ??
+    "currentPage";
+  if (scope !== "currentPage" && scope !== "allPages") {
+    fail("INVALID_INPUT", "scope must be one of: currentPage, allPages");
   }
-  return { matches: matches.map((node) => toMutationResult(node)) };
+  const pageId = getFindString(params, queryFilters, "pageId");
+  const nodeId = getFindString(params, queryFilters, "nodeId");
+  const name = getFindString(params, queryFilters, "name");
+  const key = getFindString(params, queryFilters, "key");
+  const parentId = getFindString(params, queryFilters, "parentId");
+  const types = getFindTypes(params, queryFilters);
+  const nameMatch =
+    (getFindString(params, queryFilters, "nameMatch") as "contains" | "exact" | "regex" | undefined) ??
+    "contains";
+  if (nameMatch !== "contains" && nameMatch !== "exact" && nameMatch !== "regex") {
+    fail("INVALID_INPUT", "nameMatch must be one of: contains, exact, regex");
+  }
+  const includeHidden = getFindBoolean(params, queryFilters, "includeHidden") !== false;
+  const rawLimit = getFindNumber(params, queryFilters, "limit") ?? 100;
+  if (!Number.isInteger(rawLimit) || rawLimit <= 0) {
+    fail("INVALID_INPUT", "limit must be a positive integer");
+  }
+  const limit = Math.min(rawLimit, 500);
+  const effectiveName = name ?? nameSubstring;
+  const nameMatcher = effectiveName ? createNameMatcher(effectiveName, name ? nameMatch : "contains") : undefined;
+  const filters = { includeHidden, nodeId, types, key, parentId, nameMatcher };
+
+  let warnings: FindNodesWarning[] = [];
+  let limited: SceneNode[] = [];
+  let totalScanned = 0;
+  let totalMatched = 0;
+  let allPagesStats: Pick<FindNodesSummary, "pagesLoaded" | "pagesFailed" | "pagesSkipped" | "complete"> | undefined;
+  let allPagesStartedAt: number | undefined;
+  let allPagesMaxDurationMs: number | undefined;
+
+  if (scope === "allPages" && !pageId) {
+    const result = await findNodesAcrossAllPages(filters, limit);
+    limited = result.nodes;
+    totalScanned = result.totalScanned;
+    totalMatched = result.totalMatched;
+    warnings = result.warnings;
+    allPagesStats = {
+      pagesLoaded: result.pagesLoaded,
+      pagesFailed: result.pagesFailed,
+      pagesSkipped: result.pagesSkipped,
+      complete: result.complete,
+    };
+    allPagesStartedAt = result.startedAt;
+    allPagesMaxDurationMs = result.maxDurationMs;
+  } else {
+    const rootsResult = await getFindRoots(scope, pageId);
+    warnings = rootsResult.warnings;
+    const nodes: SceneNode[] = [];
+    for (const root of rootsResult.roots) {
+      collectNodes(root, nodes);
+    }
+    totalScanned = nodes.length;
+    const matches = nodes.filter((node) => matchesFindFilters(node, filters));
+    totalMatched = matches.length;
+    limited = matches.slice(0, limit);
+  }
+
+  const complete = allPagesStats?.complete ?? true;
+  const summary: FindNodesSummary = {
+    scope,
+    effectiveScope: pageId ? "page" : scope,
+    pageId,
+    totalScanned,
+    totalMatched,
+    returned: limited.length,
+    limit,
+    truncated: totalMatched > limited.length || !complete,
+    ...(allPagesStats ?? {}),
+  };
+  const serializedMatches: FindNodeResult[] = [];
+  const serializeWarnings: FindNodesWarning[] = [];
+  for (const node of limited) {
+    if (
+      allPagesStartedAt !== undefined &&
+      allPagesMaxDurationMs !== undefined &&
+      Date.now() - allPagesStartedAt >= allPagesMaxDurationMs
+    ) {
+      if (!warnings.some((warning) => warning.code === "SKIPPED_TIME_BUDGET")) {
+        serializeWarnings.push(
+          toSkippedPagesWarning("SKIPPED_TIME_BUDGET", {
+            maxDurationMs: allPagesMaxDurationMs,
+            serializedMatches: serializedMatches.length,
+            skippedMatches: limited.length - serializedMatches.length,
+          })
+        );
+      }
+      break;
+    }
+    const serialized = toFindNodeResultSafe(node);
+    serializedMatches.push(serialized.result);
+    if (serialized.warning) {
+      serializeWarnings.push(serialized.warning);
+    }
+  }
+  summary.returned = serializedMatches.length;
+  if (serializedMatches.length < limited.length) {
+    summary.truncated = true;
+  }
+  const responseWarnings = [...warnings, ...serializeWarnings];
+  return {
+    summary,
+    matches: serializedMatches,
+    ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+  };
 }
 
 /** Deletes a current-page node and reports its id. */

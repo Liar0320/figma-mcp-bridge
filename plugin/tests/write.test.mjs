@@ -54,6 +54,8 @@ function createBaseNode(id, type, name) {
 /** Builds a mock `figma` runtime that is sufficient for write-tool tests. */
 function createMockFigma() {
   let nextId = 1;
+  let loadAllPagesAsyncCalls = 0;
+  const getNodeByIdAsyncErrors = new Map();
   const registry = new Map();
   const createNodeId = () => `1:${nextId++}`;
 
@@ -62,22 +64,39 @@ function createMockFigma() {
     type: "DOCUMENT",
     parent: null,
     children: [],
-  };
-
-  const page = Object.assign(createBaseNode("1:0", "PAGE", "Page 1"), {
-    type: "PAGE",
-    children: [],
     appendChild(child) {
-      if (child.parent && "children" in child.parent) {
-        child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
-      }
       child.parent = this;
       this.children.push(child);
       registry.set(child.id, child);
     },
-  });
-  page.parent = documentNode;
-  documentNode.children.push(page);
+  };
+
+  const createPageNode = (id, name) => {
+    const pageNode = Object.assign(createBaseNode(id, "PAGE", name), {
+      type: "PAGE",
+      loadAsyncCalls: 0,
+      loadAsyncError: undefined,
+      children: [],
+      async loadAsync() {
+        this.loadAsyncCalls += 1;
+        if (this.loadAsyncError) {
+          throw this.loadAsyncError;
+        }
+      },
+      appendChild(child) {
+        if (child.parent && "children" in child.parent) {
+          child.parent.children = child.parent.children.filter((node) => node.id !== child.id);
+        }
+        child.parent = this;
+        this.children.push(child);
+        registry.set(child.id, child);
+      },
+    });
+    documentNode.appendChild(pageNode);
+    return pageNode;
+  };
+
+  const page = createPageNode("1:0", "Page 1");
   registry.set(page.id, page);
 
   /** Tracks nodes created during a test so async lookup behaves like the Figma runtime. */
@@ -295,14 +314,28 @@ function createMockFigma() {
     );
 
   return {
+    root: documentNode,
     currentPage: page,
+    createTestPage(name = `Page ${documentNode.children.length + 1}`) {
+      return createPageNode(createNodeId(), name);
+    },
     createFrame,
     createComponent,
     combineAsVariants,
     createRectangle,
     createText,
+    getNodeByIdAsyncErrors,
     async getNodeByIdAsync(nodeId) {
+      if (getNodeByIdAsyncErrors.has(nodeId)) {
+        throw getNodeByIdAsyncErrors.get(nodeId);
+      }
       return registry.get(nodeId) ?? null;
+    },
+    get loadAllPagesAsyncCalls() {
+      return loadAllPagesAsyncCalls;
+    },
+    async loadAllPagesAsync() {
+      loadAllPagesAsyncCalls += 1;
     },
     async loadFontAsync() {},
   };
@@ -835,6 +868,394 @@ async function testFindNodesQuerySubstringFallback() {
   );
 }
 
+/** Verifies default find_nodes scope remains the current page. */
+async function testFindNodesDefaultScopeStaysOnCurrentPage() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, { name: "Button" });
+
+  assert.equal(result.summary.scope, "currentPage");
+  assert.equal(result.summary.effectiveScope, "currentPage");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(componentsPage.loadAsyncCalls, 0);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button Current");
+  assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
+  assert.deepEqual(result.matches[0].path, ["Page 1", "Button Current"]);
+}
+
+/** Verifies all-pages search can find typed nodes outside the current page. */
+async function testFindNodesAllPagesTypeFilterIncludesRemotePages() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Frame" });
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button / Primary";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    type: "COMPONENT",
+  });
+
+  assert.equal(result.summary.scope, "allPages");
+  assert.equal(result.summary.effectiveScope, "allPages");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].type, "COMPONENT");
+  assert.equal(result.matches[0].name, "Button / Primary");
+  assert.equal(result.matches[0].pageId, componentsPage.id);
+  assert.equal(result.matches[0].pageName, "Components");
+  assert.deepEqual(result.matches[0].path, ["Components", "Button / Primary"]);
+}
+
+/** Verifies all-pages search returns partial results when one page cannot load. */
+async function testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const brokenPage = globalThis.figma.createTestPage("Broken Page");
+  brokenPage.loadAsyncError = new Error("Unable to establish connection to Figma after 10 seconds");
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  componentsPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 10,
+  });
+
+  assert.equal(result.summary.scope, "allPages");
+  assert.equal(result.summary.effectiveScope, "allPages");
+  assert.equal(result.summary.pagesLoaded, 2);
+  assert.equal(result.summary.pagesFailed, 1);
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(brokenPage.loadAsyncCalls, 1);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
+  assert.equal(result.summary.totalMatched, 2);
+  assert.equal(result.matches.length, 2);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "PAGE_LOAD_FAILED");
+  assert.equal(result.warnings[0].pageId, brokenPage.id);
+  assert.equal(result.warnings[0].pageName, "Broken Page");
+  assert.match(result.warnings[0].message, /Unable to establish connection/);
+}
+
+/** Verifies all-pages search stops before the bridge timeout and returns partial results. */
+async function testFindNodesAllPagesStopsAtTimeBudgetWithWarning() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Current Page Node" });
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+  const thirdPage = globalThis.figma.createTestPage("Third Page");
+  const fourthPage = globalThis.figma.createTestPage("Fourth Page");
+
+  let now = 0;
+  const originalNow = Date.now;
+  Date.now = () => {
+    now += 11_000;
+    return now;
+  };
+  try {
+    const result = await handleWriteRequest("find_nodes", undefined, {
+      scope: "allPages",
+      name: "Definitely Missing",
+      nameMatch: "exact",
+      limit: 10,
+    });
+
+    assert.equal(result.summary.scope, "allPages");
+    assert.equal(result.summary.effectiveScope, "allPages");
+    assert.equal(result.summary.pagesLoaded, 1);
+    assert.equal(result.summary.pagesFailed, 0);
+    assert.equal(result.summary.pagesSkipped, 3);
+    assert.equal(result.summary.complete, false);
+    assert.equal(result.summary.truncated, true);
+    assert.equal(result.summary.totalMatched, 0);
+    assert.equal(result.matches.length, 0);
+    assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+    assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+    assert.equal(secondPage.loadAsyncCalls, 0);
+    assert.equal(thirdPage.loadAsyncCalls, 0);
+    assert.equal(fourthPage.loadAsyncCalls, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(result.warnings[0].code, "SKIPPED_TIME_BUDGET");
+    assert.equal(result.warnings[0].details.pagesScanned, 1);
+    assert.equal(result.warnings[0].details.pagesSkipped, 3);
+    assert.equal(result.warnings[0].details.maxDurationMs, 20_000);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+/** Verifies all-pages search checks the time budget again after a slow page load before traversing nodes. */
+async function testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting() {
+  globalThis.figma = createMockFigma();
+
+  let now = 0;
+  const originalNow = Date.now;
+  const currentPage = globalThis.figma.currentPage;
+  currentPage.loadAsync = async function loadAsync() {
+    this.loadAsyncCalls += 1;
+    now = 21_000;
+  };
+  Object.defineProperty(currentPage, "children", {
+    configurable: true,
+    get() {
+      throw new Error("children should not be traversed after the time budget is exhausted");
+    },
+  });
+
+  Date.now = () => now;
+  try {
+    const result = await handleWriteRequest("find_nodes", undefined, {
+      scope: "allPages",
+      name: "Definitely Missing",
+      nameMatch: "exact",
+      limit: 10,
+    });
+
+    assert.equal(result.summary.scope, "allPages");
+    assert.equal(result.summary.pagesLoaded, 1);
+    assert.equal(result.summary.complete, false);
+    assert.equal(result.summary.truncated, true);
+    assert.equal(result.summary.totalScanned, 0);
+    assert.equal(result.summary.totalMatched, 0);
+    assert.equal(result.matches.length, 0);
+    assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+    assert.equal(currentPage.loadAsyncCalls, 1);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(result.warnings[0].code, "SKIPPED_TIME_BUDGET");
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+/** Verifies all-pages search can stop early when the requested limit is satisfied. */
+async function testFindNodesAllPagesStopsWhenLimitSatisfied() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button Current" });
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+  const thirdPage = globalThis.figma.createTestPage("Third Page");
+  const remoteButton = globalThis.figma.createComponent();
+  remoteButton.name = "Button Remote";
+  secondPage.appendChild(remoteButton);
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesFailed, 0);
+  assert.equal(result.summary.pagesSkipped, 2);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.truncated, true);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button Current");
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
+  assert.equal(secondPage.loadAsyncCalls, 0);
+  assert.equal(thirdPage.loadAsyncCalls, 0);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
+}
+
+/** Verifies all-pages limit handling stops inside the current page before traversing remaining siblings. */
+async function testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button First" });
+  const expensiveSibling = globalThis.figma.createFrame();
+  expensiveSibling.name = "Expensive Sibling";
+  Object.defineProperty(expensiveSibling, "children", {
+    configurable: true,
+    get() {
+      throw new Error("siblings after a satisfied limit should not be traversed");
+    },
+  });
+  globalThis.figma.currentPage.appendChild(expensiveSibling);
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesSkipped, 1);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.totalScanned, 1);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button First");
+  assert.equal(secondPage.loadAsyncCalls, 0);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
+}
+
+/** Verifies pageId load failures are reported as structured page-load errors. */
+async function testFindNodesPageIdLoadFailureIsStructured() {
+  globalThis.figma = createMockFigma();
+
+  const brokenPage = globalThis.figma.createTestPage("Broken Page");
+  brokenPage.loadAsyncError = new Error("Unable to establish connection to Figma after 10 seconds");
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { pageId: brokenPage.id, limit: 1 }),
+    "PAGE_LOAD_FAILED",
+    /Unable to load page 'Broken Page'/
+  );
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(brokenPage.loadAsyncCalls, 1);
+}
+
+/** Verifies pageId resolution failures are reported before leaking generic runtime errors. */
+async function testFindNodesPageIdResolveFailureIsStructured() {
+  globalThis.figma = createMockFigma();
+
+  const pageId = "9:999";
+  globalThis.figma.getNodeByIdAsyncErrors.set(
+    pageId,
+    new Error("Unable to establish connection to Figma after 10 seconds")
+  );
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { pageId, limit: 1 }),
+    "PAGE_RESOLVE_FAILED",
+    /Unable to resolve page '9:999'/
+  );
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+}
+
+/** Verifies find_nodes falls back to minimal metadata when full node serialization fails. */
+async function testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning() {
+  globalThis.figma = createMockFigma();
+
+  const component = globalThis.figma.createComponent();
+  component.name = "Broken Component";
+  globalThis.figma.currentPage.appendChild(component);
+  Object.defineProperty(component, "variantProperties", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      throw new Error("in get_variantProperties: Component set for node has existing errors");
+    },
+  });
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    type: "COMPONENT",
+    name: "Broken Component",
+    nameMatch: "exact",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].nodeId, component.id);
+  assert.equal(result.matches[0].type, "COMPONENT");
+  assert.equal(result.matches[0].name, "Broken Component");
+  assert.equal(result.matches[0].parentId, globalThis.figma.currentPage.id);
+  assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
+  assert.deepEqual(result.matches[0].path, ["Page 1", "Broken Component"]);
+  assert.equal(result.matches[0].node, undefined);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "NODE_SERIALIZE_FAILED");
+  assert.equal(result.warnings[0].nodeId, component.id);
+  assert.equal(result.warnings[0].nodeType, "COMPONENT");
+  assert.equal(result.warnings[0].field, "node");
+  assert.match(result.warnings[0].message, /Component set for node has existing errors/);
+}
+
+/** Verifies pageId, exact matching, and component-set type filters compose. */
+async function testFindNodesPageIdExactComponentSetFilter() {
+  globalThis.figma = createMockFigma();
+
+  const componentsPage = globalThis.figma.createTestPage("Components");
+  const primary = globalThis.figma.createComponent();
+  primary.name = "State=Default";
+  componentsPage.appendChild(primary);
+  const hover = globalThis.figma.createComponent();
+  hover.name = "State=Hover";
+  componentsPage.appendChild(hover);
+  const buttonSet = globalThis.figma.combineAsVariants([primary, hover], componentsPage);
+  buttonSet.name = "Button";
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    pageId: componentsPage.id,
+    name: "Button",
+    nameMatch: "exact",
+    type: ["COMPONENT_SET"],
+  });
+
+  assert.equal(result.summary.scope, "currentPage");
+  assert.equal(result.summary.effectiveScope, "page");
+  assert.equal(result.summary.pageId, componentsPage.id);
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+  assert.equal(componentsPage.loadAsyncCalls, 1);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches[0].nodeId, buttonSet.id);
+  assert.equal(result.matches[0].type, "COMPONENT_SET");
+  assert.deepEqual(result.matches[0].path, ["Components", "Button"]);
+}
+
+/** Verifies regex matching, hidden filtering, and limit reporting. */
+async function testFindNodesRegexHiddenAndLimit() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Icon/Add" });
+  const hidden = await handleWriteRequest("create_frame", undefined, { name: "Icon/Remove" });
+  const hiddenNode = await globalThis.figma.getNodeByIdAsync(hidden.nodeId);
+  hiddenNode.visible = false;
+  await handleWriteRequest("create_frame", undefined, { name: "Icon/Edit" });
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    name: "^Icon/",
+    nameMatch: "regex",
+    includeHidden: false,
+    limit: 1,
+  });
+
+  assert.equal(result.summary.totalMatched, 2);
+  assert.equal(result.summary.returned, 1);
+  assert.equal(result.summary.truncated, true);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Icon/Add");
+}
+
+/** Verifies invalid regex filters fail with a structured input error. */
+async function testFindNodesInvalidRegexFails() {
+  globalThis.figma = createMockFigma();
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { name: "[", nameMatch: "regex" }),
+    "INVALID_INPUT",
+    /Invalid name regex/
+  );
+}
+
 /** Verifies failed create steps in a batch do not leave behind unreported root-level nodes. */
 async function testBatchCreateFailureDoesNotLeakNodes() {
   globalThis.figma = createMockFigma();
@@ -1062,6 +1483,34 @@ async function runTests() {
     ["testBatchValidationFailure", testBatchValidationFailure],
     ["testFindNodesJsonQuery", testFindNodesJsonQuery],
     ["testFindNodesQuerySubstringFallback", testFindNodesQuerySubstringFallback],
+    ["testFindNodesDefaultScopeStaysOnCurrentPage", testFindNodesDefaultScopeStaysOnCurrentPage],
+    ["testFindNodesAllPagesTypeFilterIncludesRemotePages", testFindNodesAllPagesTypeFilterIncludesRemotePages],
+    [
+      "testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings",
+      testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings,
+    ],
+    [
+      "testFindNodesAllPagesStopsAtTimeBudgetWithWarning",
+      testFindNodesAllPagesStopsAtTimeBudgetWithWarning,
+    ],
+    [
+      "testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting",
+      testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting,
+    ],
+    ["testFindNodesAllPagesStopsWhenLimitSatisfied", testFindNodesAllPagesStopsWhenLimitSatisfied],
+    [
+      "testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied",
+      testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied,
+    ],
+    ["testFindNodesPageIdLoadFailureIsStructured", testFindNodesPageIdLoadFailureIsStructured],
+    ["testFindNodesPageIdResolveFailureIsStructured", testFindNodesPageIdResolveFailureIsStructured],
+    [
+      "testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning",
+      testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning,
+    ],
+    ["testFindNodesPageIdExactComponentSetFilter", testFindNodesPageIdExactComponentSetFilter],
+    ["testFindNodesRegexHiddenAndLimit", testFindNodesRegexHiddenAndLimit],
+    ["testFindNodesInvalidRegexFails", testFindNodesInvalidRegexFails],
     ["testBatchCreateFailureDoesNotLeakNodes", testBatchCreateFailureDoesNotLeakNodes],
     ["testBatchSetStrokesSupportsTmpRef", testBatchSetStrokesSupportsTmpRef],
   ];

@@ -74,6 +74,9 @@ const componentPropertyType = z.enum(["BOOLEAN", "TEXT", "INSTANCE_SWAP", "VARIA
 const componentPropertyValue = z.union([z.string(), z.boolean()]);
 const componentPropertyMap = z.record(z.string().min(1), componentPropertyValue);
 const variantPropertyMap = z.record(z.string().min(1), z.string().min(1));
+const findNodesScope = z.enum(["currentPage", "allPages"]);
+const findNodesNameMatch = z.enum(["contains", "exact", "regex"]);
+const findNodesType = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 const preferredInstanceSwapValue = z.object({
   type: z.enum(["COMPONENT", "COMPONENT_SET"]),
   key: z.string().min(1),
@@ -457,10 +460,23 @@ export const toolInputSchemas = {
     name: nodeName,
   }),
   find_nodes: withFileKey({
+    query: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Legacy search string or JSON-encoded filters. Plain strings match node names by substring."),
     nodeId: figmaNodeId.optional(),
     name: z.string().min(1).optional(),
     key: z.string().min(1).optional(),
     parentId: figmaNodeId.optional(),
+    scope: findNodesScope.optional().describe("Search scope. Defaults to currentPage for backwards compatibility."),
+    pageId: figmaNodeId.optional().describe("Optional page ID. When provided, searches only that page."),
+    type: findNodesType
+      .optional()
+      .describe("Optional Figma node type or list of types, e.g. COMPONENT, COMPONENT_SET, FRAME, TEXT, INSTANCE."),
+    nameMatch: findNodesNameMatch.optional().describe("Name matching mode. Defaults to contains."),
+    limit: z.number().int().min(1).max(500).optional().describe("Maximum number of matches to return. Default 100, max 500."),
+    includeHidden: z.boolean().optional().describe("Whether to include hidden nodes. Defaults to true for compatibility."),
   }),
   delete_node: withFileKey({
     nodeId: figmaNodeId,
