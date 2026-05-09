@@ -1003,6 +1003,49 @@ async function testFindNodesAllPagesStopsAtTimeBudgetWithWarning() {
   }
 }
 
+/** Verifies all-pages search checks the time budget again after a slow page load before traversing nodes. */
+async function testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting() {
+  globalThis.figma = createMockFigma();
+
+  let now = 0;
+  const originalNow = Date.now;
+  const currentPage = globalThis.figma.currentPage;
+  currentPage.loadAsync = async function loadAsync() {
+    this.loadAsyncCalls += 1;
+    now = 21_000;
+  };
+  Object.defineProperty(currentPage, "children", {
+    configurable: true,
+    get() {
+      throw new Error("children should not be traversed after the time budget is exhausted");
+    },
+  });
+
+  Date.now = () => now;
+  try {
+    const result = await handleWriteRequest("find_nodes", undefined, {
+      scope: "allPages",
+      name: "Definitely Missing",
+      nameMatch: "exact",
+      limit: 10,
+    });
+
+    assert.equal(result.summary.scope, "allPages");
+    assert.equal(result.summary.pagesLoaded, 1);
+    assert.equal(result.summary.complete, false);
+    assert.equal(result.summary.truncated, true);
+    assert.equal(result.summary.totalScanned, 0);
+    assert.equal(result.summary.totalMatched, 0);
+    assert.equal(result.matches.length, 0);
+    assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+    assert.equal(currentPage.loadAsyncCalls, 1);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(result.warnings[0].code, "SKIPPED_TIME_BUDGET");
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 /** Verifies all-pages search can stop early when the requested limit is satisfied. */
 async function testFindNodesAllPagesStopsWhenLimitSatisfied() {
   globalThis.figma = createMockFigma();
@@ -1032,6 +1075,40 @@ async function testFindNodesAllPagesStopsWhenLimitSatisfied() {
   assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 1);
   assert.equal(secondPage.loadAsyncCalls, 0);
   assert.equal(thirdPage.loadAsyncCalls, 0);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
+}
+
+/** Verifies all-pages limit handling stops inside the current page before traversing remaining siblings. */
+async function testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied() {
+  globalThis.figma = createMockFigma();
+
+  await handleWriteRequest("create_frame", undefined, { name: "Button First" });
+  const expensiveSibling = globalThis.figma.createFrame();
+  expensiveSibling.name = "Expensive Sibling";
+  Object.defineProperty(expensiveSibling, "children", {
+    configurable: true,
+    get() {
+      throw new Error("siblings after a satisfied limit should not be traversed");
+    },
+  });
+  globalThis.figma.currentPage.appendChild(expensiveSibling);
+  const secondPage = globalThis.figma.createTestPage("Second Page");
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    scope: "allPages",
+    name: "Button",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesSkipped, 1);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.totalScanned, 1);
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].name, "Button First");
+  assert.equal(secondPage.loadAsyncCalls, 0);
   assert.equal(result.warnings.length, 1);
   assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
 }
@@ -1416,7 +1493,15 @@ async function runTests() {
       "testFindNodesAllPagesStopsAtTimeBudgetWithWarning",
       testFindNodesAllPagesStopsAtTimeBudgetWithWarning,
     ],
+    [
+      "testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting",
+      testFindNodesAllPagesChecksBudgetAfterPageLoadBeforeCollecting,
+    ],
     ["testFindNodesAllPagesStopsWhenLimitSatisfied", testFindNodesAllPagesStopsWhenLimitSatisfied],
+    [
+      "testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied",
+      testFindNodesAllPagesStopsWithinPageWhenLimitSatisfied,
+    ],
     ["testFindNodesPageIdLoadFailureIsStructured", testFindNodesPageIdLoadFailureIsStructured],
     ["testFindNodesPageIdResolveFailureIsStructured", testFindNodesPageIdResolveFailureIsStructured],
     [

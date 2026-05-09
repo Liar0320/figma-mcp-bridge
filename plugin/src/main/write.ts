@@ -1111,6 +1111,38 @@ function collectNodes(root: ChildrenMixin, acc: SceneNode[]): void {
   }
 }
 
+/** Recursively scans find_nodes matches and stops as soon as the requested limit is satisfied. */
+function scanFindNodesUntilLimit(
+  root: ChildrenMixin,
+  filters: Parameters<typeof matchesFindFilters>[1],
+  limit: number,
+  matches: SceneNode[]
+): { scanned: number; matched: number; limitReached: boolean } {
+  let scanned = 0;
+  let matched = 0;
+
+  for (const child of root.children) {
+    scanned += 1;
+    if (matchesFindFilters(child, filters)) {
+      matched += 1;
+      matches.push(child);
+      if (matches.length >= limit) {
+        return { scanned, matched, limitReached: true };
+      }
+    }
+    if ("children" in child) {
+      const result = scanFindNodesUntilLimit(child, filters, limit, matches);
+      scanned += result.scanned;
+      matched += result.matched;
+      if (result.limitReached) {
+        return { scanned, matched, limitReached: true };
+      }
+    }
+  }
+
+  return { scanned, matched, limitReached: false };
+}
+
 /** Returns the page owning a node, if it has one. */
 function getNodePage(node: BaseNode): PageNode | undefined {
   let current: BaseNode | null = node;
@@ -1273,7 +1305,7 @@ function matchesFindFilters(
   return true;
 }
 
-/** Returns the roots to traverse for find_nodes according to scope/page filters. */
+/** Returns the roots to traverse for current-page/pageId find_nodes searches. */
 async function getFindRoots(
   scope: "currentPage" | "allPages",
   pageId?: string
@@ -1305,18 +1337,7 @@ async function getFindRoots(
     return { roots: [page], warnings: [] };
   }
   if (scope === "allPages") {
-    const roots: PageNode[] = [];
-    const warnings: FindNodesWarning[] = [];
-    const pages = [...figma.root.children] as PageNode[];
-    for (const page of pages) {
-      try {
-        await page.loadAsync();
-        roots.push(page);
-      } catch (error) {
-        warnings.push(toPageLoadWarning(page, error));
-      }
-    }
-    return { roots, warnings };
+    fail("INVALID_INPUT", "allPages find_nodes searches must use the bounded incremental scanner");
   }
   return { roots: [figma.currentPage], warnings: [] };
 }
@@ -1382,26 +1403,23 @@ async function findNodesAcrossAllPages(
       continue;
     }
 
-    const pageNodes: SceneNode[] = [];
-    collectNodes(page, pageNodes);
-    totalScanned += pageNodes.length;
-    for (const node of pageNodes) {
-      if (!matchesFindFilters(node, filters)) continue;
-      totalMatched += 1;
-      if (nodes.length < limit) {
-        nodes.push(node);
-      }
+    if (Date.now() - startedAt >= maxDurationMs) {
+      stopReason = "timeBudget";
+      break;
     }
 
-    if (nodes.length >= limit) {
+    const result = scanFindNodesUntilLimit(page, filters, limit, nodes);
+    totalScanned += result.scanned;
+    totalMatched += result.matched;
+    if (result.limitReached) {
       stopReason = "limit";
       break;
     }
   }
 
   const pagesSkipped = Math.max(0, pages.length - pagesVisited);
-  const complete = pagesSkipped === 0;
-  if (pagesSkipped > 0) {
+  const complete = stopReason === undefined && pagesSkipped === 0;
+  if (!complete) {
     warnings.push(
       toSkippedPagesWarning(stopReason === "timeBudget" ? "SKIPPED_TIME_BUDGET" : "SKIPPED_LIMIT", {
         maxDurationMs,
