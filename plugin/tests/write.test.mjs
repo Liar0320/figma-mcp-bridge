@@ -55,6 +55,7 @@ function createBaseNode(id, type, name) {
 function createMockFigma() {
   let nextId = 1;
   let loadAllPagesAsyncCalls = 0;
+  const getNodeByIdAsyncErrors = new Map();
   const registry = new Map();
   const createNodeId = () => `1:${nextId++}`;
 
@@ -323,7 +324,11 @@ function createMockFigma() {
     combineAsVariants,
     createRectangle,
     createText,
+    getNodeByIdAsyncErrors,
     async getNodeByIdAsync(nodeId) {
+      if (getNodeByIdAsyncErrors.has(nodeId)) {
+        throw getNodeByIdAsyncErrors.get(nodeId);
+      }
       return registry.get(nodeId) ?? null;
     },
     get loadAllPagesAsyncCalls() {
@@ -968,6 +973,64 @@ async function testFindNodesPageIdLoadFailureIsStructured() {
   assert.equal(brokenPage.loadAsyncCalls, 1);
 }
 
+/** Verifies pageId resolution failures are reported before leaking generic runtime errors. */
+async function testFindNodesPageIdResolveFailureIsStructured() {
+  globalThis.figma = createMockFigma();
+
+  const pageId = "9:999";
+  globalThis.figma.getNodeByIdAsyncErrors.set(
+    pageId,
+    new Error("Unable to establish connection to Figma after 10 seconds")
+  );
+
+  await assertMutationError(
+    handleWriteRequest("find_nodes", undefined, { pageId, limit: 1 }),
+    "PAGE_RESOLVE_FAILED",
+    /Unable to resolve page '9:999'/
+  );
+  assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
+  assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
+}
+
+/** Verifies find_nodes falls back to minimal metadata when full node serialization fails. */
+async function testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning() {
+  globalThis.figma = createMockFigma();
+
+  const component = globalThis.figma.createComponent();
+  component.name = "Broken Component";
+  globalThis.figma.currentPage.appendChild(component);
+  Object.defineProperty(component, "variantProperties", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      throw new Error("in get_variantProperties: Component set for node has existing errors");
+    },
+  });
+
+  const result = await handleWriteRequest("find_nodes", undefined, {
+    type: "COMPONENT",
+    name: "Broken Component",
+    nameMatch: "exact",
+    limit: 1,
+  });
+
+  assert.equal(result.summary.totalMatched, 1);
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].nodeId, component.id);
+  assert.equal(result.matches[0].type, "COMPONENT");
+  assert.equal(result.matches[0].name, "Broken Component");
+  assert.equal(result.matches[0].parentId, globalThis.figma.currentPage.id);
+  assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
+  assert.deepEqual(result.matches[0].path, ["Page 1", "Broken Component"]);
+  assert.equal(result.matches[0].node, undefined);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].code, "NODE_SERIALIZE_FAILED");
+  assert.equal(result.warnings[0].nodeId, component.id);
+  assert.equal(result.warnings[0].nodeType, "COMPONENT");
+  assert.equal(result.warnings[0].field, "node");
+  assert.match(result.warnings[0].message, /Component set for node has existing errors/);
+}
+
 /** Verifies pageId, exact matching, and component-set type filters compose. */
 async function testFindNodesPageIdExactComponentSetFilter() {
   globalThis.figma = createMockFigma();
@@ -1270,6 +1333,11 @@ async function runTests() {
       testFindNodesAllPagesSkipsPageLoadFailuresWithWarnings,
     ],
     ["testFindNodesPageIdLoadFailureIsStructured", testFindNodesPageIdLoadFailureIsStructured],
+    ["testFindNodesPageIdResolveFailureIsStructured", testFindNodesPageIdResolveFailureIsStructured],
+    [
+      "testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning",
+      testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning,
+    ],
     ["testFindNodesPageIdExactComponentSetFilter", testFindNodesPageIdExactComponentSetFilter],
     ["testFindNodesRegexHiddenAndLimit", testFindNodesRegexHiddenAndLimit],
     ["testFindNodesInvalidRegexFails", testFindNodesInvalidRegexFails],

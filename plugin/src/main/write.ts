@@ -21,17 +21,22 @@ type MutationResult = {
   node: ReturnType<typeof serializeNode>;
 };
 
-type FindNodeResult = MutationResult & {
+type FindNodeResult = Omit<MutationResult, "node"> & {
+  node?: ReturnType<typeof serializeNode>;
   pageId?: string;
   pageName?: string;
   path: string[];
 };
 
 type FindNodesWarning = {
-  code: "PAGE_LOAD_FAILED";
+  code: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED";
   message: string;
-  pageId: string;
+  pageId?: string;
   pageName?: string;
+  nodeId?: string;
+  nodeName?: string;
+  nodeType?: string;
+  field?: string;
   details?: unknown;
 };
 
@@ -1134,6 +1139,45 @@ function toFindNodeResult(node: SceneNode): FindNodeResult {
   };
 }
 
+/** Builds minimal find_nodes metadata without deep node serialization. */
+function toMinimalFindNodeResult(node: SceneNode): FindNodeResult {
+  const page = getNodePage(node);
+  return {
+    nodeId: node.id,
+    type: node.type,
+    name: node.name,
+    parentId: node.parent && node.parent.type !== "DOCUMENT" ? node.parent.id : undefined,
+    key: getPluginKey(node),
+    pageId: page?.id,
+    pageName: page?.name,
+    path: getNodePath(node),
+  };
+}
+
+/** Serializes a find_nodes match, falling back to minimal metadata if deep serialization fails. */
+function toFindNodeResultSafe(node: SceneNode): { result: FindNodeResult; warning?: FindNodesWarning } {
+  try {
+    return { result: toFindNodeResult(node) };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    const result = toMinimalFindNodeResult(node);
+    return {
+      result,
+      warning: {
+        code: "NODE_SERIALIZE_FAILED",
+        message: `Unable to serialize node '${node.name}' (${node.id}): ${message}`,
+        nodeId: node.id,
+        nodeName: node.name,
+        nodeType: node.type,
+        pageId: result.pageId,
+        pageName: result.pageName,
+        field: "node",
+        details: { message },
+      },
+    };
+  }
+}
+
 /** Reads a string filter from direct params or the legacy JSON query object. */
 function getFindString(
   params: RequestParams,
@@ -1199,7 +1243,16 @@ async function getFindRoots(
   pageId?: string
 ): Promise<{ roots: PageNode[]; warnings: FindNodesWarning[] }> {
   if (pageId) {
-    const page = await figma.getNodeByIdAsync(pageId);
+    let page: BaseNode | null;
+    try {
+      page = await figma.getNodeByIdAsync(pageId);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      fail("PAGE_RESOLVE_FAILED", `Unable to resolve page '${pageId}': ${message}`, {
+        pageId,
+        message,
+      });
+    }
     if (!page || page.type !== "PAGE") {
       fail("NOT_FOUND", "pageId was not found");
     }
@@ -1326,10 +1379,20 @@ async function findNodes(params: RequestParams): Promise<unknown> {
       ? { pagesLoaded: roots.length, pagesFailed: warnings.length }
       : {}),
   };
+  const serializedMatches: FindNodeResult[] = [];
+  const serializeWarnings: FindNodesWarning[] = [];
+  for (const node of limited) {
+    const serialized = toFindNodeResultSafe(node);
+    serializedMatches.push(serialized.result);
+    if (serialized.warning) {
+      serializeWarnings.push(serialized.warning);
+    }
+  }
+  const responseWarnings = [...warnings, ...serializeWarnings];
   return {
     summary,
-    matches: limited.map((node) => toFindNodeResult(node)),
-    ...(warnings.length > 0 ? { warnings } : {}),
+    matches: serializedMatches,
+    ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
   };
 }
 
