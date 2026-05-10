@@ -161,8 +161,13 @@ async function testMetadataReadFailureIsWarningOnly() {
   assert.equal(result.summary.componentCount, 1);
   assert.equal(result.summary.warningCount, 1);
   assert.deepEqual(result.components.map((item) => item.name), ["Healthy Component"]);
+  assert.equal(result.warnings[0].code, "NODE_SERIALIZE_FAILED");
   assert.match(result.warnings[0].message, /description unavailable/);
   assert.equal(result.warnings[0].nodeId, "30:1");
+  assert.equal(result.warnings[0].nodeName, "Broken Component");
+  assert.equal(result.warnings[0].pageId, "1:1");
+  assert.equal(result.warnings[0].pageName, "Components");
+  assert.match(result.warnings[0].details.message, /description unavailable/);
 }
 
 async function testLoadAllPagesBeforeTraversingDynamicPageDocument() {
@@ -191,7 +196,9 @@ async function testLoadAllPagesFailureIsWarningOnly() {
 
   assert.equal(result.summary.componentCount, 1);
   assert.equal(result.summary.warningCount, 1);
+  assert.equal(result.warnings[0].code, "PAGE_LOAD_FAILED");
   assert.match(result.warnings[0].message, /load failed/);
+  assert.match(result.warnings[0].details.message, /load failed/);
 }
 
 await testStandaloneComponentAcrossFilePages();

@@ -342,7 +342,7 @@ function createMockFigma() {
 }
 
 /** Asserts a write request rejects with the expected structured mutation error. */
-async function assertMutationError(promise, code, messagePattern) {
+async function assertMutationError(promise, code, messagePattern, verify) {
   await assert.rejects(
     promise,
     (error) => {
@@ -350,6 +350,7 @@ async function assertMutationError(promise, code, messagePattern) {
       if (messagePattern) {
         assert.match(error.mutationError?.message ?? "", messagePattern);
       }
+      if (verify) verify(error.mutationError);
       return true;
     }
   );
@@ -1123,7 +1124,12 @@ async function testFindNodesPageIdLoadFailureIsStructured() {
   await assertMutationError(
     handleWriteRequest("find_nodes", undefined, { pageId: brokenPage.id, limit: 1 }),
     "PAGE_LOAD_FAILED",
-    /Unable to load page 'Broken Page'/
+    /Unable to load page 'Broken Page'/,
+    (mutationError) => {
+      assert.equal(mutationError.details.pageId, brokenPage.id);
+      assert.equal(mutationError.details.pageName, "Broken Page");
+      assert.match(mutationError.details.message, /Unable to establish connection/);
+    }
   );
   assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
   assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
@@ -1143,7 +1149,11 @@ async function testFindNodesPageIdResolveFailureIsStructured() {
   await assertMutationError(
     handleWriteRequest("find_nodes", undefined, { pageId, limit: 1 }),
     "PAGE_RESOLVE_FAILED",
-    /Unable to resolve page '9:999'/
+    /Unable to resolve page '9:999'/,
+    (mutationError) => {
+      assert.equal(mutationError.details.pageId, pageId);
+      assert.match(mutationError.details.message, /Unable to establish connection/);
+    }
   );
   assert.equal(globalThis.figma.loadAllPagesAsyncCalls, 0);
   assert.equal(globalThis.figma.currentPage.loadAsyncCalls, 0);
@@ -1156,6 +1166,9 @@ async function testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning(
   const component = globalThis.figma.createComponent();
   component.name = "Broken Component";
   globalThis.figma.currentPage.appendChild(component);
+  const healthy = globalThis.figma.createComponent();
+  healthy.name = "Healthy Component";
+  globalThis.figma.currentPage.appendChild(healthy);
   Object.defineProperty(component, "variantProperties", {
     configurable: true,
     enumerable: true,
@@ -1166,25 +1179,32 @@ async function testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning(
 
   const result = await handleWriteRequest("find_nodes", undefined, {
     type: "COMPONENT",
-    name: "Broken Component",
-    nameMatch: "exact",
-    limit: 1,
+    name: "Component",
+    limit: 10,
   });
 
-  assert.equal(result.summary.totalMatched, 1);
-  assert.equal(result.matches.length, 1);
+  assert.equal(result.summary.totalMatched, 2);
+  assert.equal(result.matches.length, 2);
   assert.equal(result.matches[0].nodeId, component.id);
   assert.equal(result.matches[0].type, "COMPONENT");
   assert.equal(result.matches[0].name, "Broken Component");
   assert.equal(result.matches[0].parentId, globalThis.figma.currentPage.id);
   assert.equal(result.matches[0].pageId, globalThis.figma.currentPage.id);
   assert.deepEqual(result.matches[0].path, ["Page 1", "Broken Component"]);
-  assert.equal(result.matches[0].node, undefined);
+  assert.equal(result.matches[0].node.id, component.id);
+  assert.equal(result.matches[0].node.name, "Broken Component");
+  assert.equal(result.matches[0].node.serializationErrors.length, 1);
+  assert.equal(result.matches[0].node.serializationErrors[0].field, "variantProperties");
+  assert.match(result.matches[0].node.serializationErrors[0].message, /Component set for node has existing errors/);
+  assert.equal(result.matches[1].nodeId, healthy.id);
+  assert.equal(result.matches[1].name, "Healthy Component");
+  assert.equal(result.matches[1].node.id, healthy.id);
   assert.equal(result.warnings.length, 1);
   assert.equal(result.warnings[0].code, "NODE_SERIALIZE_FAILED");
   assert.equal(result.warnings[0].nodeId, component.id);
   assert.equal(result.warnings[0].nodeType, "COMPONENT");
-  assert.equal(result.warnings[0].field, "node");
+  assert.equal(result.warnings[0].field, "variantProperties");
+  assert.match(result.warnings[0].details.message, /Component set for node has existing errors/);
   assert.match(result.warnings[0].message, /Component set for node has existing errors/);
 }
 

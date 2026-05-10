@@ -1192,7 +1192,25 @@ function toMinimalFindNodeResult(node: SceneNode): FindNodeResult {
 /** Serializes a find_nodes match, falling back to minimal metadata if deep serialization fails. */
 function toFindNodeResultSafe(node: SceneNode): { result: FindNodeResult; warning?: FindNodesWarning } {
   try {
-    return { result: toFindNodeResult(node) };
+    const result = toFindNodeResult(node);
+    const serializationError = result.node?.serializationErrors?.[0];
+    if (serializationError) {
+      return {
+        result,
+        warning: {
+          code: "NODE_SERIALIZE_FAILED",
+          message: `Unable to serialize node '${node.name}' (${node.id}) field '${serializationError.field}': ${serializationError.message}`,
+          nodeId: node.id,
+          nodeName: node.name,
+          nodeType: node.type,
+          pageId: result.pageId,
+          pageName: result.pageName,
+          field: serializationError.field,
+          details: serializationError,
+        },
+      };
+    }
+    return { result };
   } catch (error) {
     const message = getErrorMessage(error);
     const result = toMinimalFindNodeResult(node);
