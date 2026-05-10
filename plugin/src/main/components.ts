@@ -1,8 +1,12 @@
 export type LocalComponentWarning = {
+  code?: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED";
   nodeId?: string;
   nodeName?: string;
+  pageId?: string;
+  pageName?: string;
   type?: string;
   message: string;
+  details?: unknown;
 };
 
 export type LocalComponentMetadata = {
@@ -72,6 +76,20 @@ const clonePlain = <T>(value: T): T => {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const nodeSerializeWarning = (
+  node: ComponentNode | ComponentSetNode,
+  message: string,
+  details?: unknown
+): LocalComponentWarning => ({
+  code: "NODE_SERIALIZE_FAILED",
+  nodeId: node.id,
+  nodeName: node.name,
+  type: node.type,
+  ...getPageInfo(node),
+  message,
+  details,
+});
+
 const readComponentPropertyDefinitions = (
   node: ComponentNode | ComponentSetNode,
   warnings: LocalComponentWarning[]
@@ -79,11 +97,13 @@ const readComponentPropertyDefinitions = (
   try {
     return clonePlain(node.componentPropertyDefinitions ?? null);
   } catch (error) {
+    const message = errorMessage(error);
     warnings.push({
-      nodeId: node.id,
-      nodeName: node.name,
-      type: node.type,
-      message: `Failed to read componentPropertyDefinitions: ${errorMessage(error)}`,
+      ...nodeSerializeWarning(
+        node,
+        `Failed to read componentPropertyDefinitions: ${message}`,
+        { message, field: "componentPropertyDefinitions" }
+      ),
     });
     return null;
   }
@@ -118,11 +138,9 @@ const serializeComponent = (
 
     return metadata;
   } catch (error) {
+    const message = errorMessage(error);
     warnings.push({
-      nodeId: component?.id,
-      nodeName: component?.name,
-      type: component?.type,
-      message: `Failed to read component metadata: ${errorMessage(error)}`,
+      ...nodeSerializeWarning(component, `Failed to read component metadata: ${message}`, { message }),
     });
     return null;
   }
@@ -153,11 +171,9 @@ const serializeComponentSet = (
       variants,
     };
   } catch (error) {
+    const message = errorMessage(error);
     warnings.push({
-      nodeId: componentSet?.id,
-      nodeName: componentSet?.name,
-      type: componentSet?.type,
-      message: `Failed to read component set metadata: ${errorMessage(error)}`,
+      ...nodeSerializeWarning(componentSet, `Failed to read component set metadata: ${message}`, { message }),
     });
     return null;
   }
@@ -171,8 +187,11 @@ export const collectLocalComponents = async (): Promise<LocalComponentsResult> =
   try {
     await figma.loadAllPagesAsync();
   } catch (error) {
+    const message = errorMessage(error);
     warnings.push({
-      message: `Failed to load all pages before component traversal: ${errorMessage(error)}`,
+      code: "PAGE_LOAD_FAILED",
+      message: `Failed to load all pages before component traversal: ${message}`,
+      details: { message },
     });
   }
 

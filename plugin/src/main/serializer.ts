@@ -105,8 +105,15 @@ type SerializedNode = {
   componentProperties?: ComponentProperties;
   exposedInstanceIds?: string[];
   isExposedInstance?: boolean;
+  serializationErrors?: SerializedNodeSerializationError[];
   children?: SerializedNode[];
   childCount?: number;
+};
+
+type SerializedNodeSerializationError = {
+  code: "NODE_SERIALIZE_FAILED";
+  field: string;
+  message: string;
 };
 
 const isMixed = (value: unknown): value is symbol => typeof value === "symbol";
@@ -375,37 +382,79 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
 const canReadComponentPropertyDefinitions = (node: SceneNode): node is (ComponentNode | ComponentSetNode) & ComponentPropertiesMixin =>
   node.type === "COMPONENT_SET" || (node.type === "COMPONENT" && node.parent?.type !== "COMPONENT_SET");
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const recordSerializationError = (
+  node: SerializedNode,
+  field: string,
+  error: unknown
+) => {
+  node.serializationErrors = [
+    ...(node.serializationErrors ?? []),
+    {
+      code: "NODE_SERIALIZE_FAILED",
+      field,
+      message: getErrorMessage(error),
+    },
+  ];
+};
+
+const readComponentMetadataField = (
+  enriched: SerializedNode,
+  field: string,
+  read: () => void
+) => {
+  try {
+    read();
+  } catch (error) {
+    recordSerializationError(enriched, field, error);
+  }
+};
+
 const serializeComponentMetadata = (node: SceneNode, base: SerializedNode): SerializedNode => {
   const enriched = { ...base };
 
   if ("variantProperties" in node) {
-    enriched.variantProperties = node.variantProperties
-      ? { ...(node.variantProperties as Record<string, string>) }
-      : null;
+    readComponentMetadataField(enriched, "variantProperties", () => {
+      enriched.variantProperties = node.variantProperties
+        ? { ...(node.variantProperties as Record<string, string>) }
+        : null;
+    });
   }
   if ("variantGroupProperties" in node) {
-    enriched.variantGroupProperties = Object.fromEntries(
-      Object.entries(node.variantGroupProperties).map(([property, group]) => [
-        property,
-        { values: [...group.values] },
-      ])
-    );
+    readComponentMetadataField(enriched, "variantGroupProperties", () => {
+      enriched.variantGroupProperties = Object.fromEntries(
+        Object.entries(node.variantGroupProperties).map(([property, group]) => [
+          property,
+          { values: [...group.values] },
+        ])
+      );
+    });
   }
   // Figma throws when reading componentPropertyDefinitions on variant components.
   // The field is only valid for component sets and non-variant components.
   if (canReadComponentPropertyDefinitions(node) && "componentPropertyDefinitions" in node) {
-    enriched.componentPropertyDefinitions = {
-      ...node.componentPropertyDefinitions,
-    };
+    readComponentMetadataField(enriched, "componentPropertyDefinitions", () => {
+      enriched.componentPropertyDefinitions = {
+        ...node.componentPropertyDefinitions,
+      };
+    });
   }
   if ("componentProperties" in node) {
-    enriched.componentProperties = { ...(node.componentProperties as ComponentProperties) };
+    readComponentMetadataField(enriched, "componentProperties", () => {
+      enriched.componentProperties = { ...(node.componentProperties as ComponentProperties) };
+    });
   }
   if ("exposedInstances" in node) {
-    enriched.exposedInstanceIds = node.exposedInstances.map((instance) => instance.id);
+    readComponentMetadataField(enriched, "exposedInstances", () => {
+      enriched.exposedInstanceIds = node.exposedInstances.map((instance) => instance.id);
+    });
   }
   if ("isExposedInstance" in node) {
-    enriched.isExposedInstance = node.isExposedInstance;
+    readComponentMetadataField(enriched, "isExposedInstance", () => {
+      enriched.isExposedInstance = node.isExposedInstance;
+    });
   }
 
   return enriched;
