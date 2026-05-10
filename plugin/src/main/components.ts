@@ -285,7 +285,7 @@ const collectFromNodes = (
   components: ComponentNode[],
   componentSets: ComponentSetNode[],
   warnings: LocalComponentWarning[],
-  options: { limit?: number; returnedCount?: number; onLimit?: () => void } = {}
+  options: { limit?: number; returnedCount?: number; onLimit?: (returnedCount: number) => void } = {}
 ): ComponentCollections & { returnedCount: number; hitLimit: boolean } => {
   const serializedSets: LocalComponentSetMetadata[] = [];
   const standaloneComponents: LocalComponentMetadata[] = [];
@@ -296,7 +296,7 @@ const collectFromNodes = (
   const canReturn = (): boolean => limit === undefined || returnedCount < limit;
   const noteLimit = () => {
     hitLimit = true;
-    options.onLimit?.();
+    options.onLimit?.(returnedCount);
   };
 
   const variantIds = new Set<string>();
@@ -362,13 +362,13 @@ const collectBoundedLocalComponents = async (
   const skippedPageIds: string[] = [];
   let limitWarningAdded = false;
 
-  const addLimitWarning = () => {
+  const addLimitWarning = (limitReturnedCount = returnedCount) => {
     if (limitWarningAdded) return;
     limitWarningAdded = true;
     warnings.push({
       code: "SKIPPED_LIMIT",
-      message: `Stopped local component scan after returning ${returnedCount} top-level entries because limit ${options.limit} was reached.`,
-      details: { limit: options.limit, returnedCount },
+      message: `Stopped local component scan after returning ${limitReturnedCount} top-level entries because limit ${options.limit} was reached.`,
+      details: { limit: options.limit, returnedCount: limitReturnedCount },
     });
   };
 
@@ -449,7 +449,7 @@ const collectBoundedLocalComponents = async (
         complete = false;
         truncated = true;
         nextCursor = options.pageId ? undefined : String(index + 1);
-        addLimitWarning();
+        addLimitWarning(returnedCount);
         pagesSkipped += remaining.length;
         skippedPageIds.push(...remaining.map((entry) => entry.page.id));
         break;
