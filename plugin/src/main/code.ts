@@ -84,6 +84,10 @@ type ServerRequest = {
     includeMetadata?: boolean;
     cssSelector?: string;
     failureMode?: "best-effort" | "atomic" | "grouped";
+    limit?: number;
+    pageId?: string;
+    cursor?: string;
+    maxDurationMs?: number;
   };
 };
 
@@ -245,7 +249,12 @@ const handleRequest = async (
         return {
           type: request.type,
           requestId: request.requestId,
-          data: await collectLocalComponents(),
+          data: await collectLocalComponents({
+            limit: request.params?.limit,
+            pageId: request.params?.pageId,
+            cursor: request.params?.cursor,
+            maxDurationMs: request.params?.maxDurationMs,
+          }),
         };
       }
       case "get_design_context": {

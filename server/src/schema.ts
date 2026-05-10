@@ -152,13 +152,40 @@ const fileKeyField = z
 const withFileKey = <T extends z.ZodRawShape>(shape: T) =>
   z.object({ ...shape, fileKey: fileKeyField });
 
+const localComponentsPaginationFields = {
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe(
+      "Maximum number of top-level inventory entries (component sets + standalone components) to return. Omit for backwards-compatible full inventory."
+    ),
+  pageId: figmaNodeId
+    .optional()
+    .describe("Restrict local component inventory to a single page."),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Pagination cursor returned by a previous bounded local component inventory call."),
+  maxDurationMs: z
+    .number()
+    .int()
+    .min(100)
+    .max(25000)
+    .optional()
+    .describe("Best-effort scan time budget in milliseconds before returning partial results and warnings."),
+};
+
 export const toolInputSchemas = {
   get_document: withFileKey({}),
   get_selection: withFileKey({}),
   get_styles: withFileKey({}),
   get_metadata: withFileKey({}),
-  get_local_components: withFileKey({}),
-  get_components: withFileKey({}),
+  get_local_components: withFileKey(localComponentsPaginationFields),
+  get_components: withFileKey(localComponentsPaginationFields),
   get_variable_defs: withFileKey({}),
   get_design_tokens: withFileKey({}),
 

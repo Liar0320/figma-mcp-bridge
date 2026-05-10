@@ -141,19 +141,29 @@ export function registerTools(server: McpServer, node: Node): void {
 
   server.tool(
     "get_local_components",
-    "Get all local Figma components and component sets in the current file, including page metadata, keys, descriptions, component property definitions, variant properties, and component-set/variant hierarchy. Read-only and does not require selection.",
+    "Get local Figma components and component sets in the current file, including page metadata, keys, descriptions, component property definitions, variant properties, and component-set/variant hierarchy. Supports optional bounded inventory with limit/pageId/cursor/maxDurationMs for large files. Read-only and does not require selection.",
     toolInputSchemas.get_local_components.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_local_components", undefined, fileKey));
+    async ({ fileKey, limit, pageId, cursor, maxDurationMs }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (limit !== undefined) params.limit = limit;
+      if (pageId !== undefined) params.pageId = pageId;
+      if (cursor !== undefined) params.cursor = cursor;
+      if (maxDurationMs !== undefined) params.maxDurationMs = maxDurationMs;
+      return renderResponse(() => node.sendWithParams("get_local_components", undefined, params, fileKey));
     }
   );
 
   server.tool(
     "get_components",
-    "Alias for get_local_components. Lists local components and component sets in the current Figma file with hierarchy and metadata.",
+    "Alias for get_local_components. Lists local components and component sets in the current Figma file with hierarchy and metadata, including optional bounded inventory parameters for large files.",
     toolInputSchemas.get_components.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_components", undefined, fileKey));
+    async ({ fileKey, limit, pageId, cursor, maxDurationMs }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (limit !== undefined) params.limit = limit;
+      if (pageId !== undefined) params.pageId = pageId;
+      if (cursor !== undefined) params.cursor = cursor;
+      if (maxDurationMs !== undefined) params.maxDurationMs = maxDurationMs;
+      return renderResponse(() => node.sendWithParams("get_components", undefined, params, fileKey));
     }
   );
 
