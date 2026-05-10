@@ -232,6 +232,29 @@ async function testBoundedLimitReturnsPartialResultWithoutFullPageLoad() {
   assert.equal(calls.includes("loadAllPagesAsync"), false);
 }
 
+async function testBoundedCursorContinuesWithinSamePage() {
+  const { root, pageA, pageB } = makeDocument();
+  append(pageA, component("65:1", "First Same Page"));
+  append(pageA, component("65:2", "Second Same Page"));
+  append(pageB, component("65:3", "Next Page"));
+  setFigmaMock({ root });
+
+  const firstPage = await collectLocalComponents({ limit: 1, maxDurationMs: 5000 });
+  assert.deepEqual(firstPage.components.map((item) => item.name), ["First Same Page"]);
+  assert.equal(firstPage.summary.nextCursor, "0:1");
+
+  const secondPage = await collectLocalComponents({
+    limit: 1,
+    cursor: firstPage.summary.nextCursor,
+    maxDurationMs: 5000,
+  });
+
+  assert.deepEqual(secondPage.components.map((item) => item.name), ["Second Same Page"]);
+  assert.equal(secondPage.summary.nextCursor, "1");
+  assert.equal(secondPage.summary.pagesLoaded, 1);
+  assert.deepEqual(secondPage.summary.scannedPageIds, ["1:1"]);
+}
+
 async function testBoundedPageIdScansOnlyRequestedPage() {
   const { root, pageA, pageB } = makeDocument();
   append(pageA, component("70:1", "Ignored"));
@@ -248,6 +271,31 @@ async function testBoundedPageIdScansOnlyRequestedPage() {
   assert.ok(calls.includes("page.loadAsync:1:2"));
   assert.equal(calls.includes("page.loadAsync:1:1"), false);
   assert.equal(calls.includes("loadAllPagesAsync"), false);
+}
+
+async function testBoundedPageIdCursorContinuesWithinRequestedPage() {
+  const { root, pageA, pageB } = makeDocument();
+  append(pageA, component("75:1", "First Target"));
+  append(pageA, component("75:2", "Second Target"));
+  append(pageB, component("75:3", "Ignored Other Page"));
+  setFigmaMock({ root });
+
+  const firstPage = await collectLocalComponents({ pageId: "1:1", limit: 1, maxDurationMs: 5000 });
+  assert.deepEqual(firstPage.components.map((item) => item.name), ["First Target"]);
+  assert.equal(firstPage.summary.nextCursor, "0:1");
+
+  const secondPage = await collectLocalComponents({
+    pageId: "1:1",
+    limit: 1,
+    cursor: firstPage.summary.nextCursor,
+    maxDurationMs: 5000,
+  });
+
+  assert.deepEqual(secondPage.components.map((item) => item.name), ["Second Target"]);
+  assert.equal(secondPage.summary.nextCursor, undefined);
+  assert.equal(secondPage.summary.complete, true);
+  assert.equal(secondPage.summary.pagesLoaded, 1);
+  assert.deepEqual(secondPage.summary.scannedPageIds, ["1:1"]);
 }
 
 async function testBoundedPageLoadFailureIsStructuredWarning() {
@@ -274,7 +322,9 @@ await testMetadataReadFailureIsWarningOnly();
 await testLoadAllPagesBeforeTraversingDynamicPageDocument();
 await testLoadAllPagesFailureIsWarningOnly();
 await testBoundedLimitReturnsPartialResultWithoutFullPageLoad();
+await testBoundedCursorContinuesWithinSamePage();
 await testBoundedPageIdScansOnlyRequestedPage();
+await testBoundedPageIdCursorContinuesWithinRequestedPage();
 await testBoundedPageLoadFailureIsStructuredWarning();
 
-console.log("components.test.mjs: 9 passed");
+console.log("components.test.mjs: 11 passed");
