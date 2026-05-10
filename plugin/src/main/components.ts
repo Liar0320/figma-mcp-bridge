@@ -48,7 +48,7 @@ export type LocalComponentsOptions = {
   limit?: number;
   /** Restrict the scan to a single page. */
   pageId?: string;
-  /** Opaque pagination cursor returned by a previous bounded call. Currently a page index. */
+  /** Opaque pagination cursor returned by a previous bounded call. Numeric page-index cursors are still accepted. */
   cursor?: string;
   /** Best-effort wall-clock budget for page loading/traversal. */
   maxDurationMs?: number;
@@ -265,12 +265,27 @@ const isBoundedScan = (options: LocalComponentsOptions): boolean =>
   options.cursor !== undefined ||
   options.maxDurationMs !== undefined;
 
-const parseCursor = (cursor: string | undefined, pageCount: number): number => {
-  if (!cursor) return 0;
-  const parsed = Number.parseInt(cursor, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return Math.min(parsed, pageCount);
+type LocalComponentsCursor = { pageIndex: number; entryOffset: number };
+
+const parseCursor = (cursor: string | undefined, pageCount: number): LocalComponentsCursor => {
+  if (!cursor) return { pageIndex: 0, entryOffset: 0 };
+
+  const parts = cursor.split(":");
+  const parsedPageIndex = Number.parseInt(parts[0] ?? "", 10);
+  const parsedEntryOffset = parts.length > 1 ? Number.parseInt(parts[1] ?? "", 10) : 0;
+
+  if (!Number.isFinite(parsedPageIndex) || parsedPageIndex < 0) {
+    return { pageIndex: 0, entryOffset: 0 };
+  }
+
+  return {
+    pageIndex: Math.min(parsedPageIndex, pageCount),
+    entryOffset: Number.isFinite(parsedEntryOffset) && parsedEntryOffset > 0 ? parsedEntryOffset : 0,
+  };
 };
+
+const formatCursor = (pageIndex: number, entryOffset = 0): string =>
+  entryOffset > 0 ? `${pageIndex}:${entryOffset}` : String(pageIndex);
 
 const hasTimeRemaining = (startedAt: number, maxDurationMs?: number): boolean =>
   maxDurationMs === undefined || Date.now() - startedAt < maxDurationMs;
@@ -285,13 +300,20 @@ const collectFromNodes = (
   components: ComponentNode[],
   componentSets: ComponentSetNode[],
   warnings: LocalComponentWarning[],
-  options: { limit?: number; returnedCount?: number; onLimit?: (returnedCount: number) => void } = {}
-): ComponentCollections & { returnedCount: number; hitLimit: boolean } => {
+  options: {
+    limit?: number;
+    returnedCount?: number;
+    startOffset?: number;
+    onLimit?: (returnedCount: number) => void;
+  } = {}
+): ComponentCollections & { returnedCount: number; hitLimit: boolean; nextOffset: number; hasMoreEntries: boolean } => {
   const serializedSets: LocalComponentSetMetadata[] = [];
   const standaloneComponents: LocalComponentMetadata[] = [];
   const limit = options.limit;
+  const startOffset = options.startOffset ?? 0;
   let returnedCount = options.returnedCount ?? 0;
   let hitLimit = false;
+  let nextOffset = Math.max(0, startOffset);
 
   const canReturn = (): boolean => limit === undefined || returnedCount < limit;
   const noteLimit = () => {
@@ -301,29 +323,42 @@ const collectFromNodes = (
 
   const variantIds = new Set<string>();
   for (const set of componentSets) {
-    if (!canReturn()) {
-      noteLimit();
-      break;
-    }
-    const serializedSet = serializeComponentSet(set, warnings);
-    if (!serializedSet) continue;
-    serializedSets.push(serializedSet);
-    returnedCount += 1;
-    for (const variant of serializedSet.variants) {
-      variantIds.add(variant.componentId);
+    for (const child of set.children) {
+      if (child.type === "COMPONENT") variantIds.add(child.id);
     }
   }
 
-  for (const component of components) {
-    if (component.parent?.type === "COMPONENT_SET" || variantIds.has(component.id)) continue;
+  const standaloneTopLevelComponents = components.filter(
+    (component) => component.parent?.type !== "COMPONENT_SET" && !variantIds.has(component.id)
+  );
+  const topLevelEntries: Array<
+    | { type: "COMPONENT_SET"; node: ComponentSetNode }
+    | { type: "COMPONENT"; node: ComponentNode }
+  > = [
+    ...componentSets.map((node) => ({ type: "COMPONENT_SET" as const, node })),
+    ...standaloneTopLevelComponents.map((node) => ({ type: "COMPONENT" as const, node })),
+  ];
+
+  for (let entryIndex = startOffset; entryIndex < topLevelEntries.length; entryIndex += 1) {
     if (!canReturn()) {
+      nextOffset = entryIndex;
       noteLimit();
       break;
     }
-    const serialized = serializeComponent(component, warnings);
-    if (!serialized) continue;
-    pushUnique(standaloneComponents, serialized);
-    returnedCount += 1;
+
+    const entry = topLevelEntries[entryIndex];
+    nextOffset = entryIndex + 1;
+    if (entry.type === "COMPONENT_SET") {
+      const serializedSet = serializeComponentSet(entry.node, warnings);
+      if (!serializedSet) continue;
+      serializedSets.push(serializedSet);
+      returnedCount += 1;
+    } else {
+      const serialized = serializeComponent(entry.node, warnings);
+      if (!serialized) continue;
+      pushUnique(standaloneComponents, serialized);
+      returnedCount += 1;
+    }
   }
 
   const nestedVariants = serializedSets.flatMap((set) => set.variants);
@@ -333,6 +368,8 @@ const collectFromNodes = (
     components: [...standaloneComponents, ...nestedVariants],
     returnedCount,
     hitLimit,
+    nextOffset,
+    hasMoreEntries: nextOffset < topLevelEntries.length,
   };
 };
 
@@ -350,7 +387,8 @@ const collectBoundedLocalComponents = async (
   const standaloneComponents: LocalComponentMetadata[] = [];
   const pages = figma.root.children;
   const startedAt = Date.now();
-  const startIndex = parseCursor(options.cursor, pages.length);
+  const cursor = parseCursor(options.cursor, pages.length);
+  const startIndex = cursor.pageIndex;
   let pagesLoaded = 0;
   let pagesFailed = 0;
   let pagesSkipped = 0;
@@ -410,7 +448,7 @@ const collectBoundedLocalComponents = async (
     if (!hasTimeRemaining(startedAt, options.maxDurationMs)) {
       complete = false;
       truncated = true;
-      nextCursor = options.pageId ? undefined : String(index);
+      nextCursor = formatCursor(index);
       const remaining = pageEntries.slice(pageEntries.findIndex((entry) => entry.index === index));
       pagesSkipped += remaining.length;
       skippedPageIds.push(...remaining.map((entry) => entry.page.id));
@@ -436,6 +474,7 @@ const collectBoundedLocalComponents = async (
       const pageResult = collectFromNodes(pageComponents, pageComponentSets, warnings, {
         limit: options.limit,
         returnedCount,
+        startOffset: options.pageId ? cursor.entryOffset : index === startIndex ? cursor.entryOffset : 0,
         onLimit: addLimitWarning,
       });
       componentSets.push(...pageResult.componentSets);
@@ -443,12 +482,18 @@ const collectBoundedLocalComponents = async (
       returnedCount = pageResult.returnedCount;
       pagesLoaded += 1;
       const remaining = pageEntries.filter((entry) => entry.index > index);
-      const reachedLimitWithMorePages =
-        options.limit !== undefined && returnedCount >= options.limit && remaining.length > 0;
-      if (pageResult.hitLimit || reachedLimitWithMorePages) {
+      const reachedLimitWithMoreEntries =
+        options.limit !== undefined &&
+        returnedCount >= options.limit &&
+        (pageResult.hasMoreEntries || remaining.length > 0);
+      if (pageResult.hitLimit || reachedLimitWithMoreEntries) {
         complete = false;
         truncated = true;
-        nextCursor = options.pageId ? undefined : String(index + 1);
+        nextCursor = pageResult.hasMoreEntries
+          ? formatCursor(index, pageResult.nextOffset)
+          : options.pageId
+            ? undefined
+            : formatCursor(index + 1);
         addLimitWarning(returnedCount);
         pagesSkipped += remaining.length;
         skippedPageIds.push(...remaining.map((entry) => entry.page.id));
@@ -473,7 +518,7 @@ const collectBoundedLocalComponents = async (
     const lastScannedIndex = scannedPageIds.length
       ? pages.findIndex((page) => page.id === scannedPageIds[scannedPageIds.length - 1]) + 1
       : startIndex;
-    if (lastScannedIndex < pages.length) nextCursor = String(lastScannedIndex);
+    if (lastScannedIndex < pages.length) nextCursor = formatCursor(lastScannedIndex);
   }
 
   return buildResult(warnings, componentSets, standaloneComponents, {
