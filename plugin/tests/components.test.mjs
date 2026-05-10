@@ -47,23 +47,36 @@ function componentSet(id, name, overrides = {}) {
 
 function setFigmaMock({ root, loadAllPagesAsync } = {}) {
   const calls = [];
+  const visitChildren = (node, callback, results = []) => {
+    for (const child of node.children ?? []) {
+      if (callback(child)) results.push(child);
+      visitChildren(child, callback, results);
+    }
+    return results;
+  };
+  for (const page of root.children ?? []) {
+    page.findAll = function findAll(callback) {
+      calls.push(`page.findAll:${this.id}`);
+      return visitChildren(this, callback);
+    };
+    page.loadAsync = async function loadAsync() {
+      calls.push(`page.loadAsync:${this.id}`);
+      if (this.loadError) throw this.loadError;
+    };
+  }
   globalThis.figma = {
     async loadAllPagesAsync() {
       calls.push("loadAllPagesAsync");
       if (loadAllPagesAsync) await loadAllPagesAsync();
     },
+    async getNodeByIdAsync(id) {
+      calls.push(`getNodeByIdAsync:${id}`);
+      return root.children.find((page) => page.id === id) ?? null;
+    },
     root: Object.assign(root, {
       findAll(callback) {
         calls.push("findAll");
-        const results = [];
-        const visit = (node) => {
-          for (const child of node.children ?? []) {
-            if (callback(child)) results.push(child);
-            visit(child);
-          }
-        };
-        visit(this);
-        return results;
+        return visitChildren(this, callback);
       },
     }),
   };
@@ -201,11 +214,67 @@ async function testLoadAllPagesFailureIsWarningOnly() {
   assert.match(result.warnings[0].details.message, /load failed/);
 }
 
+async function testBoundedLimitReturnsPartialResultWithoutFullPageLoad() {
+  const { root, pageA, pageB } = makeDocument();
+  append(pageA, component("60:1", "First"));
+  append(pageB, component("60:2", "Second"));
+  const { calls } = setFigmaMock({ root });
+
+  const result = await collectLocalComponents({ limit: 1, maxDurationMs: 5000 });
+
+  assert.equal(result.summary.returnedCount, 1);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.truncated, true);
+  assert.equal(result.summary.nextCursor, "1");
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesSkipped, 1);
+  assert.equal(result.warnings[0].code, "SKIPPED_LIMIT");
+  assert.equal(calls.includes("loadAllPagesAsync"), false);
+}
+
+async function testBoundedPageIdScansOnlyRequestedPage() {
+  const { root, pageA, pageB } = makeDocument();
+  append(pageA, component("70:1", "Ignored"));
+  append(pageB, component("70:2", "Target"));
+  const { calls } = setFigmaMock({ root });
+
+  const result = await collectLocalComponents({ pageId: "1:2", limit: 10 });
+
+  assert.deepEqual(result.components.map((item) => item.name), ["Target"]);
+  assert.equal(result.summary.complete, true);
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesSkipped, 1);
+  assert.ok(calls.includes("getNodeByIdAsync:1:2"));
+  assert.ok(calls.includes("page.loadAsync:1:2"));
+  assert.equal(calls.includes("page.loadAsync:1:1"), false);
+  assert.equal(calls.includes("loadAllPagesAsync"), false);
+}
+
+async function testBoundedPageLoadFailureIsStructuredWarning() {
+  const { root, pageA, pageB } = makeDocument();
+  append(pageA, component("80:1", "Healthy"));
+  append(pageB, component("80:2", "Broken Page Component"));
+  pageB.loadError = new Error("page load failed");
+  setFigmaMock({ root });
+
+  const result = await collectLocalComponents({ limit: 10, maxDurationMs: 5000 });
+
+  assert.deepEqual(result.components.map((item) => item.name), ["Healthy"]);
+  assert.equal(result.summary.complete, false);
+  assert.equal(result.summary.pagesLoaded, 1);
+  assert.equal(result.summary.pagesFailed, 1);
+  assert.equal(result.warnings[0].code, "PAGE_LOAD_FAILED");
+  assert.match(result.warnings[0].details.message, /page load failed/);
+}
+
 await testStandaloneComponentAcrossFilePages();
 await testComponentSetWithVariantsHierarchy();
 await testEmptyFile();
 await testMetadataReadFailureIsWarningOnly();
 await testLoadAllPagesBeforeTraversingDynamicPageDocument();
 await testLoadAllPagesFailureIsWarningOnly();
+await testBoundedLimitReturnsPartialResultWithoutFullPageLoad();
+await testBoundedPageIdScansOnlyRequestedPage();
+await testBoundedPageLoadFailureIsStructuredWarning();
 
-console.log("components.test.mjs: 6 passed");
+console.log("components.test.mjs: 9 passed");

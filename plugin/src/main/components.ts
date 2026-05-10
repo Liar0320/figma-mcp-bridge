@@ -1,5 +1,11 @@
 export type LocalComponentWarning = {
-  code?: "PAGE_LOAD_FAILED" | "NODE_SERIALIZE_FAILED";
+  code?:
+    | "PAGE_LOAD_FAILED"
+    | "PAGE_NOT_FOUND"
+    | "NODE_SERIALIZE_FAILED"
+    | "TRAVERSAL_FAILED"
+    | "SKIPPED_TIME_BUDGET"
+    | "SKIPPED_LIMIT";
   nodeId?: string;
   nodeName?: string;
   pageId?: string;
@@ -37,20 +43,63 @@ export type LocalComponentSetMetadata = {
   variants: LocalComponentMetadata[];
 };
 
+export type LocalComponentsOptions = {
+  /** Maximum number of top-level inventory entries to return (component sets + standalone components). */
+  limit?: number;
+  /** Restrict the scan to a single page. */
+  pageId?: string;
+  /** Opaque pagination cursor returned by a previous bounded call. Currently a page index. */
+  cursor?: string;
+  /** Best-effort wall-clock budget for page loading/traversal. */
+  maxDurationMs?: number;
+};
+
+export type LocalComponentsSummary = {
+  componentCount: number;
+  componentSetCount: number;
+  standaloneComponentCount: number;
+  variantCount: number;
+  warningCount: number;
+  /** True when every requested page was scanned without hitting a limit or time budget. */
+  complete?: boolean;
+  /** True when results are partial due to limit, cursor, page failure, or time budget. */
+  truncated?: boolean;
+  /** Cursor to pass to the next request when results are paginated/truncated by page. */
+  nextCursor?: string;
+  /** Count of top-level inventory entries returned (component sets + standalone components). */
+  returnedCount?: number;
+  /** Effective top-level entry limit, when provided. */
+  limit?: number;
+  /** Effective page traversal budget, when provided. */
+  maxDurationMs?: number;
+  /** Total pages in the document at the time of the scan. */
+  pageCount?: number;
+  /** Number of requested pages successfully loaded and traversed. */
+  pagesLoaded?: number;
+  /** Number of requested pages that failed to load or traverse. */
+  pagesFailed?: number;
+  /** Number of pages skipped due to cursor, pageId selection, limit, or time budget. */
+  pagesSkipped?: number;
+  /** Page ids included in this scan attempt. */
+  scannedPageIds?: string[];
+  /** Page ids not scanned by this call. */
+  skippedPageIds?: string[];
+};
+
 export type LocalComponentsResult = {
   version: 1;
   fileName: string;
-  summary: {
-    componentCount: number;
-    componentSetCount: number;
-    standaloneComponentCount: number;
-    variantCount: number;
-    warningCount: number;
-  };
+  summary: LocalComponentsSummary;
   componentSets: LocalComponentSetMetadata[];
   standaloneComponents: LocalComponentMetadata[];
   components: LocalComponentMetadata[];
   warnings: LocalComponentWarning[];
+};
+
+type ComponentCollections = {
+  componentSets: LocalComponentSetMetadata[];
+  standaloneComponents: LocalComponentMetadata[];
+  components: LocalComponentMetadata[];
 };
 
 const getPageInfo = (node: BaseNode): { pageId?: string; pageName?: string } => {
@@ -179,7 +228,271 @@ const serializeComponentSet = (
   }
 };
 
-export const collectLocalComponents = async (): Promise<LocalComponentsResult> => {
+const buildResult = (
+  warnings: LocalComponentWarning[],
+  componentSets: LocalComponentSetMetadata[],
+  standaloneComponents: LocalComponentMetadata[],
+  summaryExtras: Partial<LocalComponentsSummary> = {}
+): LocalComponentsResult => {
+  const nestedVariants = componentSets.flatMap((set) => set.variants);
+  const componentById = new Map<string, LocalComponentMetadata>();
+  for (const component of [...standaloneComponents, ...nestedVariants]) {
+    componentById.set(component.componentId, component);
+  }
+  const allComponents = [...componentById.values()];
+
+  return {
+    version: 1,
+    fileName: figma.root.name,
+    summary: {
+      componentCount: allComponents.length,
+      componentSetCount: componentSets.length,
+      standaloneComponentCount: standaloneComponents.length,
+      variantCount: nestedVariants.length,
+      ...summaryExtras,
+      warningCount: warnings.length,
+    },
+    componentSets,
+    standaloneComponents,
+    components: allComponents,
+    warnings,
+  };
+};
+
+const isBoundedScan = (options: LocalComponentsOptions): boolean =>
+  options.limit !== undefined ||
+  options.pageId !== undefined ||
+  options.cursor !== undefined ||
+  options.maxDurationMs !== undefined;
+
+const parseCursor = (cursor: string | undefined, pageCount: number): number => {
+  if (!cursor) return 0;
+  const parsed = Number.parseInt(cursor, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.min(parsed, pageCount);
+};
+
+const hasTimeRemaining = (startedAt: number, maxDurationMs?: number): boolean =>
+  maxDurationMs === undefined || Date.now() - startedAt < maxDurationMs;
+
+const pushUnique = <T extends { componentId: string }>(items: T[], item: T): void => {
+  if (!items.some((existing) => existing.componentId === item.componentId)) {
+    items.push(item);
+  }
+};
+
+const collectFromNodes = (
+  components: ComponentNode[],
+  componentSets: ComponentSetNode[],
+  warnings: LocalComponentWarning[],
+  options: { limit?: number; returnedCount?: number; onLimit?: (returnedCount: number) => void } = {}
+): ComponentCollections & { returnedCount: number; hitLimit: boolean } => {
+  const serializedSets: LocalComponentSetMetadata[] = [];
+  const standaloneComponents: LocalComponentMetadata[] = [];
+  const limit = options.limit;
+  let returnedCount = options.returnedCount ?? 0;
+  let hitLimit = false;
+
+  const canReturn = (): boolean => limit === undefined || returnedCount < limit;
+  const noteLimit = () => {
+    hitLimit = true;
+    options.onLimit?.(returnedCount);
+  };
+
+  const variantIds = new Set<string>();
+  for (const set of componentSets) {
+    if (!canReturn()) {
+      noteLimit();
+      break;
+    }
+    const serializedSet = serializeComponentSet(set, warnings);
+    if (!serializedSet) continue;
+    serializedSets.push(serializedSet);
+    returnedCount += 1;
+    for (const variant of serializedSet.variants) {
+      variantIds.add(variant.componentId);
+    }
+  }
+
+  for (const component of components) {
+    if (component.parent?.type === "COMPONENT_SET" || variantIds.has(component.id)) continue;
+    if (!canReturn()) {
+      noteLimit();
+      break;
+    }
+    const serialized = serializeComponent(component, warnings);
+    if (!serialized) continue;
+    pushUnique(standaloneComponents, serialized);
+    returnedCount += 1;
+  }
+
+  const nestedVariants = serializedSets.flatMap((set) => set.variants);
+  return {
+    componentSets: serializedSets,
+    standaloneComponents,
+    components: [...standaloneComponents, ...nestedVariants],
+    returnedCount,
+    hitLimit,
+  };
+};
+
+const loadPage = async (page: PageNode): Promise<void> => {
+  if (typeof page.loadAsync === "function") {
+    await page.loadAsync();
+  }
+};
+
+const collectBoundedLocalComponents = async (
+  options: LocalComponentsOptions
+): Promise<LocalComponentsResult> => {
+  const warnings: LocalComponentWarning[] = [];
+  const componentSets: LocalComponentSetMetadata[] = [];
+  const standaloneComponents: LocalComponentMetadata[] = [];
+  const pages = figma.root.children;
+  const startedAt = Date.now();
+  const startIndex = parseCursor(options.cursor, pages.length);
+  let pagesLoaded = 0;
+  let pagesFailed = 0;
+  let pagesSkipped = 0;
+  let returnedCount = 0;
+  let complete = true;
+  let truncated = false;
+  let nextCursor: string | undefined;
+  const scannedPageIds: string[] = [];
+  const skippedPageIds: string[] = [];
+  let limitWarningAdded = false;
+
+  const addLimitWarning = (limitReturnedCount = returnedCount) => {
+    if (limitWarningAdded) return;
+    limitWarningAdded = true;
+    warnings.push({
+      code: "SKIPPED_LIMIT",
+      message: `Stopped local component scan after returning ${limitReturnedCount} top-level entries because limit ${options.limit} was reached.`,
+      details: { limit: options.limit, returnedCount: limitReturnedCount },
+    });
+  };
+
+  let pageEntries: Array<{ page: PageNode; index: number }>;
+  if (options.pageId) {
+    const node = await figma.getNodeByIdAsync(options.pageId);
+    if (!node || node.type !== "PAGE") {
+      warnings.push({
+        code: "PAGE_NOT_FOUND",
+        pageId: options.pageId,
+        message: `Page not found for local component scan: ${options.pageId}`,
+        details: { pageId: options.pageId },
+      });
+      return buildResult(warnings, [], [], {
+        complete: false,
+        truncated: true,
+        returnedCount: 0,
+        limit: options.limit,
+        maxDurationMs: options.maxDurationMs,
+        pageCount: pages.length,
+        pagesLoaded,
+        pagesFailed,
+        pagesSkipped: pages.length,
+        scannedPageIds,
+        skippedPageIds: pages.map((page) => page.id),
+      });
+    }
+    const index = pages.findIndex((page) => page.id === node.id);
+    pageEntries = [{ page: node as PageNode, index: index >= 0 ? index : 0 }];
+    pagesSkipped = Math.max(0, pages.length - 1);
+    skippedPageIds.push(...pages.filter((page) => page.id !== node.id).map((page) => page.id));
+  } else {
+    pageEntries = pages.slice(startIndex).map((page, offset) => ({ page, index: startIndex + offset }));
+    pagesSkipped = startIndex;
+    skippedPageIds.push(...pages.slice(0, startIndex).map((page) => page.id));
+  }
+
+  for (const { page, index } of pageEntries) {
+    if (!hasTimeRemaining(startedAt, options.maxDurationMs)) {
+      complete = false;
+      truncated = true;
+      nextCursor = options.pageId ? undefined : String(index);
+      const remaining = pageEntries.slice(pageEntries.findIndex((entry) => entry.index === index));
+      pagesSkipped += remaining.length;
+      skippedPageIds.push(...remaining.map((entry) => entry.page.id));
+      warnings.push({
+        code: "SKIPPED_TIME_BUDGET",
+        pageId: page.id,
+        pageName: page.name,
+        message: `Stopped local component scan before page ${page.name} because maxDurationMs ${options.maxDurationMs} was reached.`,
+        details: { maxDurationMs: options.maxDurationMs, elapsedMs: Date.now() - startedAt, nextCursor },
+      });
+      break;
+    }
+
+    scannedPageIds.push(page.id);
+    try {
+      await loadPage(page);
+      const pageComponentSets = page.findAll(
+        (node) => node.type === "COMPONENT_SET"
+      ) as ComponentSetNode[];
+      const pageComponents = page.findAll(
+        (node) => node.type === "COMPONENT"
+      ) as ComponentNode[];
+      const pageResult = collectFromNodes(pageComponents, pageComponentSets, warnings, {
+        limit: options.limit,
+        returnedCount,
+        onLimit: addLimitWarning,
+      });
+      componentSets.push(...pageResult.componentSets);
+      standaloneComponents.push(...pageResult.standaloneComponents);
+      returnedCount = pageResult.returnedCount;
+      pagesLoaded += 1;
+      const remaining = pageEntries.filter((entry) => entry.index > index);
+      const reachedLimitWithMorePages =
+        options.limit !== undefined && returnedCount >= options.limit && remaining.length > 0;
+      if (pageResult.hitLimit || reachedLimitWithMorePages) {
+        complete = false;
+        truncated = true;
+        nextCursor = options.pageId ? undefined : String(index + 1);
+        addLimitWarning(returnedCount);
+        pagesSkipped += remaining.length;
+        skippedPageIds.push(...remaining.map((entry) => entry.page.id));
+        break;
+      }
+    } catch (error) {
+      const message = errorMessage(error);
+      pagesFailed += 1;
+      complete = false;
+      truncated = true;
+      warnings.push({
+        code: "PAGE_LOAD_FAILED",
+        pageId: page.id,
+        pageName: page.name,
+        message: `Failed to load or traverse page during local component scan: ${message}`,
+        details: { message },
+      });
+    }
+  }
+
+  if (!options.pageId && !nextCursor && !complete) {
+    const lastScannedIndex = scannedPageIds.length
+      ? pages.findIndex((page) => page.id === scannedPageIds[scannedPageIds.length - 1]) + 1
+      : startIndex;
+    if (lastScannedIndex < pages.length) nextCursor = String(lastScannedIndex);
+  }
+
+  return buildResult(warnings, componentSets, standaloneComponents, {
+    complete,
+    truncated,
+    nextCursor,
+    returnedCount,
+    limit: options.limit,
+    maxDurationMs: options.maxDurationMs,
+    pageCount: pages.length,
+    pagesLoaded,
+    pagesFailed,
+    pagesSkipped,
+    scannedPageIds,
+    skippedPageIds,
+  });
+};
+
+const collectUnboundedLocalComponents = async (): Promise<LocalComponentsResult> => {
   const warnings: LocalComponentWarning[] = [];
   let components: ComponentNode[] = [];
   let componentSets: ComponentSetNode[] = [];
@@ -201,6 +514,7 @@ export const collectLocalComponents = async (): Promise<LocalComponentsResult> =
     ) as ComponentNode[];
   } catch (error) {
     warnings.push({
+      code: "TRAVERSAL_FAILED",
       message: `Failed to traverse local components: ${errorMessage(error)}`,
     });
   }
@@ -211,46 +525,20 @@ export const collectLocalComponents = async (): Promise<LocalComponentsResult> =
     ) as ComponentSetNode[];
   } catch (error) {
     warnings.push({
+      code: "TRAVERSAL_FAILED",
       message: `Failed to traverse local component sets: ${errorMessage(error)}`,
     });
   }
 
-  const serializedSets = componentSets
-    .map((set) => serializeComponentSet(set, warnings))
-    .filter((set): set is LocalComponentSetMetadata => set !== null);
+  const collections = collectFromNodes(components, componentSets, warnings);
+  return buildResult(warnings, collections.componentSets, collections.standaloneComponents);
+};
 
-  const variantIds = new Set(
-    serializedSets.flatMap((set) => set.variants.map((variant) => variant.componentId))
-  );
-
-  const serializedComponents = components
-    .map((component) => serializeComponent(component, warnings))
-    .filter((component): component is LocalComponentMetadata => component !== null);
-
-  const standaloneComponents = serializedComponents.filter(
-    (component) => !component.componentSetId && !variantIds.has(component.componentId)
-  );
-
-  const nestedVariants = serializedSets.flatMap((set) => set.variants);
-  const componentById = new Map<string, LocalComponentMetadata>();
-  for (const component of [...serializedComponents, ...nestedVariants]) {
-    componentById.set(component.componentId, component);
+export const collectLocalComponents = async (
+  options: LocalComponentsOptions = {}
+): Promise<LocalComponentsResult> => {
+  if (isBoundedScan(options)) {
+    return collectBoundedLocalComponents(options);
   }
-  const allComponents = [...componentById.values()];
-
-  return {
-    version: 1,
-    fileName: figma.root.name,
-    summary: {
-      componentCount: allComponents.length,
-      componentSetCount: serializedSets.length,
-      standaloneComponentCount: standaloneComponents.length,
-      variantCount: nestedVariants.length,
-      warningCount: warnings.length,
-    },
-    componentSets: serializedSets,
-    standaloneComponents,
-    components: allComponents,
-    warnings,
-  };
+  return collectUnboundedLocalComponents();
 };

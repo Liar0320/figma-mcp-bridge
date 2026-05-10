@@ -93,6 +93,21 @@ test("all MCP tool schemas accept optional fileKey", () => {
   }
 });
 
+test("component inventory schemas expose bounded pagination fields", () => {
+  for (const tool of ["get_local_components", "get_components"]) {
+    const schema = toolInputSchemas[tool];
+    assert.ok("limit" in schema.shape, `${tool} should expose limit`);
+    assert.ok("pageId" in schema.shape, `${tool} should expose pageId`);
+    assert.ok("cursor" in schema.shape, `${tool} should expose cursor`);
+    assert.ok("maxDurationMs" in schema.shape, `${tool} should expose maxDurationMs`);
+
+    assert.doesNotThrow(() =>
+      schema.parse({ fileKey: "file-a", limit: 25, pageId: "1:2", cursor: "1", maxDurationMs: 5000 })
+    );
+    assert.throws(() => schema.parse({ limit: 0 }), /Number must be greater than or equal to 1/);
+  }
+});
+
 test("bridge routes explicit fileKey and fails closed when ambiguous", async () => {
   const bridge = new Bridge();
   attach(bridge, "file-a", "File A");
