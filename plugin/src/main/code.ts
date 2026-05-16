@@ -34,6 +34,7 @@ type RequestType =
   | "create_frame"
   | "create_component"
   | "create_instance"
+  | "swap_instance_component"
   | "combine_as_variants"
   | "set_variant_properties"
   | "manage_component_properties"

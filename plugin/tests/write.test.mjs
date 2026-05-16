@@ -254,6 +254,13 @@ function createMockFigma() {
                     }
                   }
                 },
+                swapComponent(componentNode) {
+                  this.mainComponent = componentNode;
+                  this.variantProperties = componentNode.variantProperties;
+                  this.name = `${componentNode.name} Instance`;
+                  this.width = componentNode.width;
+                  this.height = componentNode.height;
+                },
               })
             );
           },
@@ -437,6 +444,159 @@ async function testCreateInstanceRejectsNonComponentSource() {
     handleWriteRequest("create_instance", undefined, { componentId: frame.nodeId }),
     "INVALID_COMPONENT",
     /componentId must reference a COMPONENT node/
+  );
+}
+
+/** Verifies swap_instance_component swaps to another component and preserves instance bounds by default. */
+async function testSwapInstanceComponentPreservesBounds() {
+  globalThis.figma = createMockFigma();
+
+  const source = await handleWriteRequest("create_component", undefined, { name: "Button / Old" });
+  const target = await handleWriteRequest("create_component", undefined, {
+    name: "Button / New",
+    width: 240,
+    height: 64,
+  });
+  const instanceResult = await handleWriteRequest("create_instance", undefined, {
+    componentId: source.nodeId,
+    x: 32,
+    y: 48,
+  });
+  const instance = await globalThis.figma.getNodeByIdAsync(instanceResult.nodeId);
+  instance.resize(120, 40);
+
+  const result = await handleWriteRequest("swap_instance_component", undefined, {
+    instanceId: instanceResult.nodeId,
+    componentId: target.nodeId,
+  });
+
+  assert.equal(result.type, "INSTANCE");
+  assert.equal(result.componentId, target.nodeId);
+  assert.deepEqual(result.oldMainComponent, { id: source.nodeId, name: "Button / Old" });
+  assert.deepEqual(result.newMainComponent, { id: target.nodeId, name: "Button / New" });
+  assert.equal(result.preservedBounds, true);
+  assert.deepEqual(result.boundsBefore, { x: 32, y: 48, width: 120, height: 40 });
+  assert.deepEqual(result.boundsAfter, { x: 32, y: 48, width: 120, height: 40 });
+  assert.equal(instance.mainComponent.id, target.nodeId);
+  assert.equal(instance.x, 32);
+  assert.equal(instance.y, 48);
+  assert.equal(instance.width, 120);
+  assert.equal(instance.height, 40);
+}
+
+/** Verifies swap_instance_component can target a cross-page component source. */
+async function testSwapInstanceComponentSupportsCrossPageSource() {
+  globalThis.figma = createMockFigma();
+
+  const source = await handleWriteRequest("create_component", undefined, { name: "Button / Old" });
+  const instanceResult = await handleWriteRequest("create_instance", undefined, { componentId: source.nodeId });
+  const remotePage = globalThis.figma.createTestPage("Library");
+  const remoteComponent = globalThis.figma.createComponent();
+  remoteComponent.name = "Button / Remote";
+  remotePage.appendChild(remoteComponent);
+
+  const result = await handleWriteRequest("swap_instance_component", undefined, {
+    instanceId: instanceResult.nodeId,
+    componentId: remoteComponent.id,
+  });
+  const instance = await globalThis.figma.getNodeByIdAsync(instanceResult.nodeId);
+
+  assert.equal(result.componentId, remoteComponent.id);
+  assert.equal(instance.mainComponent.id, remoteComponent.id);
+}
+
+/** Verifies preserveBounds=false lets the instance follow the replacement component size. */
+async function testSwapInstanceComponentCanFollowReplacementBounds() {
+  globalThis.figma = createMockFigma();
+
+  const source = await handleWriteRequest("create_component", undefined, { name: "Old", width: 100, height: 40 });
+  const target = await handleWriteRequest("create_component", undefined, { name: "New", width: 320, height: 72 });
+  const instanceResult = await handleWriteRequest("create_instance", undefined, { componentId: source.nodeId });
+  const instance = await globalThis.figma.getNodeByIdAsync(instanceResult.nodeId);
+  instance.resize(111, 33);
+
+  const result = await handleWriteRequest("swap_instance_component", undefined, {
+    instanceId: instanceResult.nodeId,
+    componentId: target.nodeId,
+    preserveBounds: false,
+    preserveOverrides: false,
+  });
+
+  assert.equal(result.preservedBounds, false);
+  assert.deepEqual(result.boundsBefore, { x: 0, y: 0, width: 111, height: 33 });
+  assert.deepEqual(result.boundsAfter, { x: 0, y: 0, width: 320, height: 72 });
+  assert.equal(instance.width, 320);
+  assert.equal(instance.height, 72);
+  assert.equal(result.warnings[0].code, "PRESERVE_OVERRIDES_UNSUPPORTED");
+}
+
+/** Verifies swap_instance_component resolves component-set variants and applies properties. */
+async function testSwapInstanceComponentResolvesComponentSetVariantAndProperties() {
+  globalThis.figma = createMockFigma();
+
+  const source = await handleWriteRequest("create_component", undefined, { name: "Old" });
+  const defaultComponent = await handleWriteRequest("create_component", undefined, { name: "State=Default" });
+  const hoverComponent = await handleWriteRequest("create_component", undefined, { name: "State=Hover" });
+  const componentSet = await handleWriteRequest("combine_as_variants", undefined, {
+    componentIds: [defaultComponent.nodeId, hoverComponent.nodeId],
+    name: "Button",
+  });
+  const instanceResult = await handleWriteRequest("create_instance", undefined, { componentId: source.nodeId });
+
+  const result = await handleWriteRequest("swap_instance_component", undefined, {
+    instanceId: instanceResult.nodeId,
+    componentId: componentSet.nodeId,
+    variantProperties: { State: "Hover" },
+    properties: { Label: "Buy now" },
+  });
+  const instance = await globalThis.figma.getNodeByIdAsync(instanceResult.nodeId);
+
+  assert.equal(result.componentId, hoverComponent.nodeId);
+  assert.equal(instance.mainComponent.id, hoverComponent.nodeId);
+  assert.deepEqual(instance.variantProperties, { State: "Hover" });
+  assert.equal(instance.componentProperties.State.value, "Hover");
+  assert.equal(instance.componentProperties.State.type, "VARIANT");
+  assert.equal(instance.componentProperties.Label.value, "Buy now");
+}
+
+/** Verifies swap_instance_component rejects non-instance targets. */
+async function testSwapInstanceComponentRejectsNonInstanceTarget() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, { name: "Button" });
+  const frame = await handleWriteRequest("create_frame", undefined, { name: "Not instance" });
+
+  await assertMutationError(
+    handleWriteRequest("swap_instance_component", undefined, {
+      instanceId: frame.nodeId,
+      componentId: component.nodeId,
+    }),
+    "INVALID_INSTANCE",
+    /instanceId must reference an INSTANCE node/
+  );
+}
+
+/** Verifies swap_instance_component reports no matching variant clearly. */
+async function testSwapInstanceComponentRejectsMissingVariant() {
+  globalThis.figma = createMockFigma();
+
+  const source = await handleWriteRequest("create_component", undefined, { name: "Old" });
+  const defaultComponent = await handleWriteRequest("create_component", undefined, { name: "State=Default" });
+  const hoverComponent = await handleWriteRequest("create_component", undefined, { name: "State=Hover" });
+  const componentSet = await handleWriteRequest("combine_as_variants", undefined, {
+    componentIds: [defaultComponent.nodeId, hoverComponent.nodeId],
+    name: "Button",
+  });
+  const instanceResult = await handleWriteRequest("create_instance", undefined, { componentId: source.nodeId });
+
+  await assertMutationError(
+    handleWriteRequest("swap_instance_component", undefined, {
+      instanceId: instanceResult.nodeId,
+      componentId: componentSet.nodeId,
+      variantProperties: { State: "Pressed" },
+    }),
+    "VARIANT_NOT_FOUND",
+    /No variant/
   );
 }
 
@@ -1486,6 +1646,15 @@ async function runTests() {
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
+    ["testSwapInstanceComponentPreservesBounds", testSwapInstanceComponentPreservesBounds],
+    ["testSwapInstanceComponentSupportsCrossPageSource", testSwapInstanceComponentSupportsCrossPageSource],
+    ["testSwapInstanceComponentCanFollowReplacementBounds", testSwapInstanceComponentCanFollowReplacementBounds],
+    [
+      "testSwapInstanceComponentResolvesComponentSetVariantAndProperties",
+      testSwapInstanceComponentResolvesComponentSetVariantAndProperties,
+    ],
+    ["testSwapInstanceComponentRejectsNonInstanceTarget", testSwapInstanceComponentRejectsNonInstanceTarget],
+    ["testSwapInstanceComponentRejectsMissingVariant", testSwapInstanceComponentRejectsMissingVariant],
     ["testCombineAsVariantsCreatesComponentSet", testCombineAsVariantsCreatesComponentSet],
     ["testCombineAsVariantsRequiresAtLeastTwoComponents", testCombineAsVariantsRequiresAtLeastTwoComponents],
     ["testCombineAsVariantsMissingComponentReportsNotFound", testCombineAsVariantsMissingComponentReportsNotFound],
