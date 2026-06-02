@@ -430,7 +430,7 @@ async function testCreateInstanceMissingComponentReportsNotFound() {
   await assertMutationError(
     handleWriteRequest("create_instance", undefined, { componentId: "1:404" }),
     "NOT_FOUND",
-    /componentId was not found/
+    /componentId .* was not found/
   );
 }
 
@@ -445,6 +445,34 @@ async function testCreateInstanceRejectsNonComponentSource() {
     "INVALID_COMPONENT",
     /componentId must reference a COMPONENT node/
   );
+}
+
+/** Verifies create_instance resolves components on a different page via getNodeByIdAsync (cross-page). */
+async function testCreateInstanceFromCrossPageComponent() {
+  const mock = createMockFigma();
+  globalThis.figma = mock;
+
+  // Create a component on a secondary page (not currentPage).
+  const secondPage = mock.createTestPage("Primitives");
+  const component = mock.createComponent();
+  component.name = "Button / Primary";
+  secondPage.appendChild(component);
+
+  // create_instance should still succeed because we use getNodeByIdAsync.
+  const result = await handleWriteRequest("create_instance", undefined, {
+    componentId: component.id,
+    name: "Button Instance (cross-page)",
+    x: 100,
+    y: 200,
+  });
+
+  assert.equal(result.type, "INSTANCE");
+  assert.equal(result.name, "Button Instance (cross-page)");
+  const instance = await globalThis.figma.getNodeByIdAsync(result.nodeId);
+  assert.equal(instance.type, "INSTANCE");
+  assert.equal(instance.mainComponent.id, component.id);
+  assert.equal(instance.x, 100);
+  assert.equal(instance.y, 200);
 }
 
 /** Verifies swap_instance_component swaps to another component and preserves instance bounds by default. */
@@ -1646,6 +1674,7 @@ async function runTests() {
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
+    ["testCreateInstanceFromCrossPageComponent", testCreateInstanceFromCrossPageComponent],
     ["testSwapInstanceComponentPreservesBounds", testSwapInstanceComponentPreservesBounds],
     ["testSwapInstanceComponentSupportsCrossPageSource", testSwapInstanceComponentSupportsCrossPageSource],
     ["testSwapInstanceComponentCanFollowReplacementBounds", testSwapInstanceComponentCanFollowReplacementBounds],

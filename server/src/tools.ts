@@ -351,7 +351,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "create_instance",
-    "Create an instance from a local Figma component. componentId must reference a COMPONENT node on the current page.",
+    "Create an instance from a Figma component. componentId must reference a COMPONENT node and supports components on any page in the current file (cross-page).",
     (args, fileKey) => node.sendWithParams("create_instance", undefined, args, fileKey)
   );
   registerWriteTool(
