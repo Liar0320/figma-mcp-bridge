@@ -94,19 +94,90 @@
 
 ---
 
-## 5. 设计 Token（颜色）
+## 5. 设计 Token
 
-| 用途 | 颜色值 |
+> 所有 token 以 **Figma Local Style** 形式存在（source: style），不是 Figma Variables。  
+> 用 `get_design_tokens` 可获取完整列表；用 `set_text_style` / `set_fills` 时引用 figmaId。  
+> 总计：颜色 222 个、typography 21 个、effect 1 个，共 244 个。
+
+### 颜色色板（Tailwind 原子色）
+
+色板命名格式：`color.<palette>.<shade>`，shade 范围 50–900。
+
+| Palette | 代表色（500） | 常用语义对应 |
+|---|---|---|
+| slate | `#64748B` | 文字次色、边框基础色 |
+| gray | `#6B7280` | — |
+| zinc | `#71717A` | — |
+| neutral | `#737373` | — |
+| stone | `#78716C` | — |
+| red | `#EF4444` | 错误/趋势负 |
+| orange | `#F97316` | — |
+| amber | `#F59E0B` | 警告/趋势橙 |
+| yellow | `#EAB308` | — |
+| lime | `#84CC16` | — |
+| green | `#22C55E` | 成功 |
+| **emerald** | **`#10B981`** | **趋势正（常用）** |
+| teal | `#14B8A6` | — |
+| cyan | `#06B6D4` | — |
+| sky | `#0EA5E9` | — |
+| blue | `#3B82F6` | — |
+| **indigo** | **`#6366F1`** | **Primary（默认主题）** |
+| violet | `#8B5CF6` | — |
+| purple | `#A855F7` | — |
+| fuchsia | `#D946EF` | — |
+| pink | `#EC4899` | — |
+| rose | `#F43F5E` | — |
+| white | `#FFFFFF` | — |
+| black | `#000000` | — |
+
+**语义映射（shadcn/ui 默认主题）：**
+
+| 语义 | token path | 颜色值 |
+|---|---|---|
+| Background | `color.slate.50` | `#F8FAFC` |
+| Surface/Card | `color.white` | `#FFFFFF` |
+| Primary | `color.indigo.500` | `#6366F1` |
+| Text Primary | `color.slate.800` | `#1E293B` |
+| Text Secondary | `color.slate.500` | `#64748B` |
+| Border | `color.slate.200` | `#E2E8F0` |
+| Trend Positive | `color.emerald.500` | `#10B981` |
+| Trend Negative | `color.red.500` | `#EF4444` |
+| Trend Warning | `color.amber.500` | `#F59E0B` |
+
+> ⚠️ **shadcn/ui 没有 primary/secondary 等语义 token 层**（那层在代码 CSS variables 里），Figma 里只有 Tailwind 原子色板。
+
+### Typography Token（21 个，全部 Inter 字体）
+
+| token path | 字体 | 大小 | 行高 | 用途 |
+|---|---|---|---|---|
+| `typography.h1` | Inter ExtraBold | 48 | 48 | 页面大标题 |
+| `typography.h2` | Inter SemiBold | 30 | 36 | 区域标题 |
+| `typography.h3` | Inter SemiBold | 24 | 32 | 卡片标题 |
+| `typography.h4` | Inter SemiBold | 20 | 28 | 小标题 |
+| `typography.large` | Inter SemiBold | 18 | 28 | 大号正文 |
+| `typography.lead` | Inter Regular | 20 | 28 | 导语 |
+| `typography.p` | Inter Regular | 16 | 28 | 段落正文 |
+| `typography.p-ui` | Inter Regular | 16 | 24 | UI 正文 |
+| `typography.p-ui-medium` | Inter Medium | 16 | 24 | UI 正文强调 |
+| `typography.body` | Inter Regular | 14 | 24 | 小正文（最常用） |
+| `typography.body-medium` | Inter Medium | 14 | 24 | 小正文强调 |
+| `typography.subtle` | Inter Regular | 14 | 20 | 次要/辅助文字 |
+| `typography.subtle-medium` | Inter Medium | 14 | 20 | 次要文字强调 |
+| `typography.suble-semibold` | Inter SemiBold | 14 | 20 | 次要文字半粗 |
+| `typography.small` | Inter Medium | 14 | 14 | 极小标签 |
+| `typography.detail` | Inter Medium | 12 | 20 | 说明文字 |
+| `typography.blockquote` | Inter Italic | 16 | 24 | 引用块 |
+| `typography.inline-code` | Menlo Bold | 14 | 20 | 行内代码 |
+| `typography.table-head` | Inter Bold | 16 | 24 | 表头 |
+| `typography.table-item` | Inter Regular | 16 | 24 | 表格行 |
+| `typography.list` | Inter Regular | 16 | 24 | 列表项 |
+
+### Effect Token
+
+| token path | 描述 |
 |---|---|
-| 页面背景 | `#F8FAFC` |
-| Sidebar / Card 背景 | `#FFFFFF` |
-| 主色（Primary）| `#6366F1` |
-| 文字主色 | `#1E293B` |
-| 文字次色 | `#64748B` |
-| 边框 | `#E2E8F0` |
-| 绿色趋势（正） | `#10B981` |
-| 红色趋势（负） | `#EF4444` |
-| 橙色趋势（警告） | `#F59E0B` |
+| `effect.shadow` | `drop-shadow(0 4px 6px rgba(0,0,0,0.09))` — Hover Card / Card 阴影 |
 
 ---
 
