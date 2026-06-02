@@ -386,7 +386,9 @@ export const toolInputSchemas = {
     padding: paddingSchema.optional(),
   }),
   create_instance: withFileKey({
-    componentId: figmaNodeId,
+    componentId: figmaNodeId.describe(
+      "A COMPONENT node to instantiate. Supports components on any page in the current file (cross-page)."
+    ),
     parentId: figmaNodeId.optional(),
     name: z.string().min(1).optional(),
     x: z.number().optional(),

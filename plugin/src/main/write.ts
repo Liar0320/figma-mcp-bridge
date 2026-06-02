@@ -868,11 +868,15 @@ async function createComponent(params: RequestParams): Promise<MutationResult> {
   }
 }
 
-/** Creates an instance from a local component on the current page. */
+/** Creates an instance from a component node. Supports cross-page components via getNodeByIdAsync. */
 async function createInstance(params: RequestParams): Promise<MutationResult> {
   const parent = await getParentNode(getOptionalString(params?.parentId));
   const componentId = getString(params?.componentId, "componentId");
-  const source = await getNodeById(componentId, "componentId");
+  // Use async lookup so components on other pages can be resolved.
+  const source = await figma.getNodeByIdAsync(componentId);
+  if (!source) {
+    fail("NOT_FOUND", `componentId ${componentId} was not found`);
+  }
   if (source.type !== "COMPONENT") {
     fail("INVALID_COMPONENT", "componentId must reference a COMPONENT node");
   }
