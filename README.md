@@ -135,6 +135,7 @@ Use [ENGINEERING_REVIEW_GUIDELINES.md](./ENGINEERING_REVIEW_GUIDELINES.md) as th
 - [docs/development-workflow.md](./docs/development-workflow.md): local server/plugin setup, validation commands, Figma plugin import, and common troubleshooting.
 - [docs/multi-file-routing.md](./docs/multi-file-routing.md): multi-file/plugin-instance routing behavior, `list_files`, `fileKey`, and live verification checklist.
 - [skills/README.md](./skills/README.md): repo-local agent skills that capture practical MCP tool-selection, safety, screenshot, write, token, and debug workflows.
+- [skills/shadcnui-component-library/README.md](./skills/shadcnui-component-library/README.md): shadcn/ui component library rules — all component nodeIds, variant properties, 877 Lucide icon nodeIds, color tokens, dashboard layout conventions, and migration guide for switching to a different component library. Load this skill at the start of a design session to skip rescanning.
 
 ## Contributing
 

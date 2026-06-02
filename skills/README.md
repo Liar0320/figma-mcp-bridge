@@ -17,6 +17,14 @@ These repo-local skills capture practical operating rules for `figma-mcp-bridge`
 - `figma-mcp-bridge-write-tools`: create/update/delete tools, setters, `find_nodes`, and `batch_mutation`.
 - `figma-mcp-bridge-debug-validation`: connection, parameter, leader/follower forwarding, and common failure diagnosis.
 
+## Component Library Skills
+
+These skills capture the component library rules for specific design systems used in this project. When starting a new design session, load the relevant skill to avoid rescanning all components.
+
+- `shadcnui-component-library/README.md`: shadcn/ui component library — all component nodeIds, variant properties, icon catalog (877 Lucide icons), color tokens, dashboard layout conventions, and migration guide for switching to a different component library.
+
+If a different component library is adopted later, create a new folder under `skills/` following the same structure (e.g. `antd-component-library/`, `radix-component-library/`) and reference the shadcn/ui skill as a template.
+
 ## Supporting docs
 
 - `INTAKE_AUDIT.md`: tool families, primary workflows, misuse points, and known limitations.
