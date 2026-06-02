@@ -109,6 +109,7 @@ export const batchOperationType = z.enum([
   "create_frame",
   "create_component",
   "create_instance",
+  "swap_instance_component",
   "combine_as_variants",
   "set_variant_properties",
   "manage_component_properties",
@@ -392,6 +393,24 @@ export const toolInputSchemas = {
     y: z.number().optional(),
     key: z.string().min(1).optional(),
   }),
+  swap_instance_component: withFileKey({
+    instanceId: figmaNodeId.describe("The current-page INSTANCE node to replace"),
+    componentId: figmaNodeId.describe("A COMPONENT node, or a COMPONENT_SET when variantProperties identifies a concrete variant"),
+    preserveOverrides: z
+      .boolean()
+      .optional()
+      .describe("Preserve existing instance overrides where Figma supports it. Default true."),
+    preserveBounds: z
+      .boolean()
+      .optional()
+      .describe("Restore the instance x/y/width/height after swapping. Default true."),
+    variantProperties: variantPropertyMap
+      .optional()
+      .describe("Variant dimension/value pairs used when componentId references a COMPONENT_SET, or applied after swapping."),
+    properties: componentPropertyMap
+      .optional()
+      .describe("Component property values to apply after swapping via instance.setProperties(...)."),
+  }),
   combine_as_variants: withFileKey({
     componentIds: z.array(figmaNodeId).min(2),
     parentId: figmaNodeId.optional(),
@@ -545,6 +564,7 @@ const rpcToArgs: Record<
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_component: (_nodeIds, params) => ({ ...params }),
   create_instance: (_nodeIds, params) => ({ ...params }),
+  swap_instance_component: (_nodeIds, params) => ({ ...params }),
   combine_as_variants: (_nodeIds, params) => ({ ...params }),
   set_variant_properties: (_nodeIds, params) => ({ ...params }),
   manage_component_properties: (_nodeIds, params) => ({ ...params }),

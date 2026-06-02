@@ -377,6 +377,22 @@ function validateWriteToolParams(
       if (params?.y !== undefined) getNumber(params.y, "y");
       getOptionalNonEmptyString(params?.key, "key");
       return;
+    case "swap_instance_component":
+      getFigmaNodeId(params?.instanceId, "instanceId");
+      getFigmaNodeId(params?.componentId, "componentId");
+      if (params?.preserveOverrides !== undefined && typeof params.preserveOverrides !== "boolean") {
+        fail("INVALID_INPUT", "preserveOverrides must be a boolean");
+      }
+      if (params?.preserveBounds !== undefined && typeof params.preserveBounds !== "boolean") {
+        fail("INVALID_INPUT", "preserveBounds must be a boolean");
+      }
+      if (params?.variantProperties !== undefined) {
+        validateStringRecord(params.variantProperties, "variantProperties");
+      }
+      if (params?.properties !== undefined) {
+        validateComponentPropertyValueMap(params.properties, "properties");
+      }
+      return;
     case "combine_as_variants":
       if (!Array.isArray(params?.componentIds) || params.componentIds.length < 2) {
         fail("INVALID_INPUT", "componentIds must include at least two component IDs");
@@ -872,6 +888,151 @@ async function createInstance(params: RequestParams): Promise<MutationResult> {
     node.remove();
     throw error;
   }
+}
+
+async function getComponentSourceById(componentId: string): Promise<ComponentNode | ComponentSetNode> {
+  const source = await figma.getNodeByIdAsync(componentId);
+  if (!source || source.type === "DOCUMENT" || source.type === "PAGE") {
+    fail("NOT_FOUND", "componentId was not found");
+  }
+  if (source.type !== "COMPONENT" && source.type !== "COMPONENT_SET") {
+    fail("INVALID_COMPONENT", "componentId must reference a COMPONENT or COMPONENT_SET node");
+  }
+  return source as ComponentNode | ComponentSetNode;
+}
+
+function variantMatches(component: ComponentNode, requested: Record<string, string>): boolean {
+  const actual = isObject(component.variantProperties)
+    ? (component.variantProperties as Record<string, unknown>)
+    : {};
+  return Object.entries(requested).every(([property, value]) => actual[property] === value);
+}
+
+function resolveComponentSetVariant(
+  componentSet: ComponentSetNode,
+  variantProperties: Record<string, string> | undefined
+): ComponentNode {
+  const variants = componentSet.children.filter((child): child is ComponentNode => child.type === "COMPONENT");
+  if (variants.length === 0) {
+    fail("INVALID_COMPONENT", "componentId references an empty COMPONENT_SET");
+  }
+  if (!variantProperties) {
+    if (variants.length === 1) return variants[0];
+    fail(
+      "INVALID_INPUT",
+      "variantProperties are required when componentId references a COMPONENT_SET with multiple variants"
+    );
+  }
+  const match = variants.find((variant) => variantMatches(variant, variantProperties));
+  if (!match) {
+    fail("VARIANT_NOT_FOUND", "No variant in componentId matches the requested variantProperties", {
+      componentId: componentSet.id,
+      variantProperties,
+    });
+  }
+  return match;
+}
+
+type BoundsSnapshot = { x: number; y: number; width: number; height: number };
+type ComponentSummary = { id: string; name: string } | null;
+
+function captureBounds(node: SceneNode): BoundsSnapshot {
+  return { x: node.x, y: node.y, width: node.width, height: node.height };
+}
+
+function restoreBounds(node: SceneNode, bounds: BoundsSnapshot): void {
+  node.x = bounds.x;
+  node.y = bounds.y;
+  if ("resize" in node) {
+    node.resize(bounds.width, bounds.height);
+  }
+}
+
+async function getMainComponentSummary(instance: InstanceNode): Promise<ComponentSummary> {
+  const readableInstance = instance as InstanceNode & {
+    mainComponent?: ComponentNode | null;
+    getMainComponentAsync?: () => Promise<ComponentNode | null>;
+  };
+  const component = readableInstance.getMainComponentAsync
+    ? await readableInstance.getMainComponentAsync()
+    : readableInstance.mainComponent ?? null;
+  return component ? { id: component.id, name: component.name } : null;
+}
+
+/** Swaps a current-page instance to another local component, including cross-page sources. */
+async function swapInstanceComponent(
+  params: RequestParams
+): Promise<MutationResult & {
+  oldMainComponent: ComponentSummary;
+  newMainComponent: ComponentSummary;
+  componentId: string;
+  componentName: string;
+  preservedBounds: boolean;
+  boundsBefore: BoundsSnapshot;
+  boundsAfter: BoundsSnapshot;
+  appliedProperties?: Record<string, ComponentPropertyPrimitive>;
+  warnings?: Array<{ code: string; message: string }>;
+}> {
+  const instance = await getNodeById(getString(params?.instanceId, "instanceId"), "instanceId");
+  if (instance.type !== "INSTANCE") {
+    fail("INVALID_INSTANCE", "instanceId must reference an INSTANCE node");
+  }
+
+  const source = await getComponentSourceById(getString(params?.componentId, "componentId"));
+  const variantProperties = params?.variantProperties
+    ? validateStringRecord(params.variantProperties, "variantProperties")
+    : undefined;
+  const replacement =
+    source.type === "COMPONENT"
+      ? (source as ComponentNode)
+      : resolveComponentSetVariant(source as ComponentSetNode, variantProperties);
+  const preserveBounds = params?.preserveBounds !== false;
+  const boundsBefore = captureBounds(instance);
+  const bounds = preserveBounds ? boundsBefore : undefined;
+  const oldMainComponent = await getMainComponentSummary(instance as InstanceNode);
+  const warnings: Array<{ code: string; message: string }> = [];
+  if (params?.preserveOverrides === false) {
+    warnings.push({
+      code: "PRESERVE_OVERRIDES_UNSUPPORTED",
+      message: "Figma's swapComponent API does not expose a flag to disable override preservation; applicable overrides may still be preserved.",
+    });
+  }
+
+  try {
+    (instance as InstanceNode).swapComponent(replacement);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    fail("FIGMA_API_LIMITATION", `Unable to swap instance component: ${message}`);
+  }
+
+  if (bounds) restoreBounds(instance, bounds);
+
+  const appliedProperties: Record<string, ComponentPropertyPrimitive> = {};
+  if (variantProperties) {
+    Object.assign(appliedProperties, variantProperties);
+  }
+  if (params?.properties !== undefined) {
+    Object.assign(appliedProperties, validateComponentPropertyValueMap(params.properties, "properties"));
+  }
+  if (Object.keys(appliedProperties).length > 0) {
+    (instance as InstanceNode).setProperties(appliedProperties);
+  }
+
+  const newMainComponent = await getMainComponentSummary(instance as InstanceNode);
+  const boundsAfter = captureBounds(instance);
+
+  return {
+    ...toMutationResult(instance),
+    oldMainComponent,
+    newMainComponent,
+    componentId: replacement.id,
+    componentName: replacement.name,
+    preservedBounds: preserveBounds,
+    boundsBefore,
+    boundsAfter,
+    ...(Object.keys(appliedProperties).length > 0 ? { appliedProperties } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 /** Combines existing local components into a Figma-native component set. */
@@ -1624,6 +1785,8 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return createComponent(params);
     case "create_instance":
       return createInstance(params);
+    case "swap_instance_component":
+      return swapInstanceComponent(params);
     case "combine_as_variants":
       return combineAsVariants(params);
     case "set_variant_properties":

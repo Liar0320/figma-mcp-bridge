@@ -55,6 +55,7 @@ type WriteToolName = keyof Pick<
   | "create_frame"
   | "create_component"
   | "create_instance"
+  | "swap_instance_component"
   | "combine_as_variants"
   | "set_variant_properties"
   | "manage_component_properties"
@@ -352,6 +353,11 @@ export function registerTools(server: McpServer, node: Node): void {
     "create_instance",
     "Create an instance from a local Figma component. componentId must reference a COMPONENT node on the current page.",
     (args, fileKey) => node.sendWithParams("create_instance", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "swap_instance_component",
+    "Swap a current-page INSTANCE to a COMPONENT or COMPONENT_SET variant from the same Figma file, including cross-page source components, via instance.swapComponent(...).",
+    (args, fileKey) => node.sendWithParams("swap_instance_component", undefined, args, fileKey)
   );
   registerWriteTool(
     "combine_as_variants",
