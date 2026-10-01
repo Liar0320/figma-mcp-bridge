@@ -147,3 +147,74 @@ export function repairComponentSet(current: ComponentSnapshot, desired: Componen
   const actions = planDimensionChange(current, { rename: desired.name, width: desired.width, height: desired.height });
   return { version: 1, actions, warnings: [], deterministicKey: stable(actions) };
 }
+
+/** Deterministically collapses duplicate dimension values and remaps variant tuples. */
+export type DimensionRenamePlan = {
+  dimensions: Array<{ name: string; values: string[] }>;
+  remap: Record<string, string>;
+  removed: string[];
+};
+
+export function planDimensionRename(
+  dimensions: Array<{ name: string; values: string[] }>,
+  from: string,
+  to: string,
+): DimensionRenamePlan {
+  if (!from || !to) throw new Error("INVALID_DIMENSION_NAME");
+  const remap: Record<string, string> = {};
+  const removed: string[] = [];
+  const result = dimensions.map((d) => ({ name: d.name === from ? to : d.name, values: [...d.values] }));
+  const target = result.find((d) => d.name === to);
+  const source = dimensions.find((d) => d.name === from);
+  if (source && target && source !== target) {
+    const seen = new Set(target.values);
+    for (const value of source.values) {
+      if (seen.has(value)) { removed.push(value); continue; }
+      seen.add(value); target.values.push(value);
+    }
+    // Keep a single renamed dimension when source and destination collide.
+    const first = result.findIndex((d) => d.name === to);
+    for (let i = result.length - 1; i > first; i--) if (result[i].name === to) result.splice(i, 1);
+  }
+  for (const d of result) {
+    const unique: string[] = [];
+    for (const value of d.values) { if (!unique.includes(value)) unique.push(value); else removed.push(value); }
+    d.values = unique.sort((a, b) => a.localeCompare(b));
+  }
+  return { dimensions: result.sort((a, b) => a.name.localeCompare(b.name)), remap, removed: [...new Set(removed)] };
+}
+
+/** Plan deletion of a dimension by collapsing its values into a deterministic key. */
+export function planDimensionDelete(
+  dimensions: Array<{ name: string; values: string[] }>,
+  name: string,
+  collapseValue?: string,
+): DimensionRenamePlan {
+  const target = dimensions.find((d) => d.name === name);
+  if (!target) return { dimensions: dimensions.map((d) => ({ ...d, values: [...d.values] })), remap: {}, removed: [] };
+  const replacement = collapseValue ?? target.values[0] ?? "Default";
+  const remap: Record<string, string> = {};
+  for (const value of target.values) if (value !== replacement) remap[value] = replacement;
+  return {
+    dimensions: dimensions.filter((d) => d.name !== name).map((d) => ({ name: d.name, values: [...d.values] })),
+    remap,
+    removed: [...target.values],
+  };
+}
+
+export type MergeSplitPlan = { actions: MigrationAction[]; warnings: string[]; deterministicKey: string };
+
+export function planMergeComponentSets(source: ComponentSnapshot, target: ComponentSnapshot, sourceVariantIds: string[] = []): MergeSplitPlan {
+  if (source.id === target.id) throw new Error("MERGE_SELF");
+  const ids = [...new Set(sourceVariantIds)].sort();
+  const actions: MigrationAction[] = [{ type: "clone", sourceId: source.id }, { type: "merge-set", sourceSetId: source.id, targetSetId: target.id }];
+  if (ids.length) actions.push({ type: "split-set", sourceSetId: source.id, componentIds: ids });
+  return { actions, warnings: [], deterministicKey: stable(actions) };
+}
+
+export function planSplitComponentSet(source: ComponentSnapshot, componentIds: string[]): MergeSplitPlan {
+  const ids = [...new Set(componentIds)].sort();
+  if (!ids.length) throw new Error("NO_COMPONENTS_TO_SPLIT");
+  const actions: MigrationAction[] = [{ type: "clone", sourceId: source.id }, { type: "split-set", sourceSetId: source.id, componentIds: ids }];
+  return { actions, warnings: [], deterministicKey: stable(actions) };
+}

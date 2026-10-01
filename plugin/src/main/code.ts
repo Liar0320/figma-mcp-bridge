@@ -21,7 +21,7 @@ import {
 } from "./componentTools";
 import type { TargetSchema } from "./componentTools";
 import { migrateComponentSet, repairComponentSet, buildReconciliationPlan, verifyPostflight } from "./componentMigration";
-import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack, checkpointOperation } from "./operationJournal";
+import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack, checkpointOperation, recoverOperations } from "./operationJournal";
 import { chunkMatrix, createScreenshotReport, componentError, serializeComponentError } from "./componentReliability";
 
 type RequestType =
@@ -708,6 +708,7 @@ const handleRequest = async (
   }
 };
 
+void recoverOperations();
 figma.showUI(__html__, { width: 320, height: 180 });
 sendStatus();
 
