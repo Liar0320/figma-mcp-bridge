@@ -63,6 +63,13 @@ test("all MCP tool schemas accept optional fileKey", () => {
     "apply_tokens",
     "get_screenshot",
     "save_screenshots",
+    "migrate_component_set",
+    "repair_component_set",
+    "clone_component_set",
+    "merge_component_sets",
+    "split_component_set",
+    "migrate_instances",
+    "reconcile_component_set",
     "create_frame",
     "create_component",
     "create_instance",
@@ -140,4 +147,13 @@ test("bridge routes explicit fileKey and fails closed when ambiguous", async () 
   );
 
   bridge.close();
+});
+
+
+test("component migration schemas enforce deterministic inputs", () => {
+  const migrate = toolInputSchemas.migrate_component_set;
+  assert.doesNotThrow(() => migrate.parse({ componentSetId: "1:2", dryRun: true, cloneBeforeMutate: true, dimensions: [{ action: "rename", name: "State", newName: "Mode" }] }));
+  assert.throws(() => migrate.parse({ componentSetId: "1:2", dimensions: [{ action: "rename", name: "State" }] }), /newName/);
+  const split = toolInputSchemas.split_component_set;
+  assert.doesNotThrow(() => split.parse({ componentSetId: "1:2", groups: [{ name: "A", componentIds: ["1:3"] }] }));
 });

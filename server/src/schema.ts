@@ -81,6 +81,26 @@ const preferredInstanceSwapValue = z.object({
   type: z.enum(["COMPONENT", "COMPONENT_SET"]),
   key: z.string().min(1),
 });
+
+const componentDimensionOperation = z.object({
+  action: z.enum(["rename", "delete"]),
+  name: z.string().min(1),
+  newName: z.string().min(1).optional(),
+  values: z.array(z.string().min(1)).optional(),
+  failOnUnsupported: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  if (value.action === "rename" && !value.newName) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["newName"], message: "newName is required when renaming a dimension" });
+  }
+});
+
+const componentMigrationOptions = {
+  dryRun: z.boolean().optional().describe("Plan changes without mutating Figma. Defaults to true."),
+  cloneBeforeMutate: z.boolean().optional().describe("Clone affected nodes before mutation. Defaults to true."),
+  failOnUnsupported: z.boolean().optional().describe("Fail closed when a Figma API is unavailable. Defaults to true."),
+  verify: z.boolean().optional().describe("Run deterministic postflight verification. Defaults to true."),
+};
+
 const componentPropertyOperation = z.object({
   action: z.enum(["add", "edit", "delete"]),
   propertyName: z.string().min(1),
@@ -413,6 +433,54 @@ export const toolInputSchemas = {
     format: exportFormat.optional(),
     scale: z.number().optional(),
   }),
+  migrate_component_set: withFileKey({
+    componentSetId: figmaNodeId,
+    targetComponentSetId: figmaNodeId.optional(),
+    dimensions: z.array(componentDimensionOperation).optional(),
+    instancePolicy: z.enum(["remap", "classify", "skip"]).optional(),
+    operations: z.array(z.record(z.string(), z.unknown())).optional(),
+    ...componentMigrationOptions,
+  }),
+  repair_component_set: withFileKey({
+    componentSetId: figmaNodeId,
+    dimensions: z.array(componentDimensionOperation).optional(),
+    repairVariants: z.boolean().optional(),
+    repairInstances: z.boolean().optional(),
+    operations: z.array(z.record(z.string(), z.unknown())).optional(),
+    ...componentMigrationOptions,
+  }),
+  clone_component_set: withFileKey({
+    componentSetId: figmaNodeId,
+    parentId: figmaNodeId.optional(),
+    name: z.string().min(1).optional(),
+    ...componentMigrationOptions,
+  }),
+  merge_component_sets: withFileKey({
+    componentSetIds: z.array(figmaNodeId).min(2),
+    targetComponentSetId: figmaNodeId.optional(),
+    dedupe: z.boolean().optional(),
+    ...componentMigrationOptions,
+  }),
+  split_component_set: withFileKey({
+    componentSetId: figmaNodeId,
+    groups: z.array(z.object({ name: z.string().min(1), componentIds: z.array(figmaNodeId).min(1) })).min(1),
+    deleteSource: z.boolean().optional(),
+    ...componentMigrationOptions,
+  }),
+  migrate_instances: withFileKey({
+    instanceIds: z.array(figmaNodeId).min(1).optional(),
+    sourceComponentSetId: figmaNodeId.optional(),
+    targetComponentSetId: figmaNodeId,
+    classification: z.enum(["variant", "property", "unmapped", "unsupported"]).optional(),
+    remap: z.record(z.string(), z.string()).optional(),
+    preserveOverrides: z.boolean().optional(),
+    ...componentMigrationOptions,
+  }),
+  reconcile_component_set: withFileKey({
+    componentSetId: figmaNodeId,
+    expected: z.record(z.string(), z.unknown()),
+    ...componentMigrationOptions,
+  }),
   create_frame: createNodeBase.extend({
     fileKey: fileKeyField,
     fills: z.array(solidPaint).optional(),
@@ -625,6 +693,13 @@ const rpcToArgs: Record<
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
   create_component_set: (_nodeIds, params) => ({ ...params }),
+  migrate_component_set: (_nodeIds, params) => ({ ...params }),
+  repair_component_set: (_nodeIds, params) => ({ ...params }),
+  clone_component_set: (_nodeIds, params) => ({ ...params }),
+  merge_component_sets: (_nodeIds, params) => ({ ...params }),
+  split_component_set: (_nodeIds, params) => ({ ...params }),
+  migrate_instances: (_nodeIds, params) => ({ ...params }),
+  reconcile_component_set: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_component: (_nodeIds, params) => ({ ...params }),
   create_instance: (_nodeIds, params) => ({ ...params }),

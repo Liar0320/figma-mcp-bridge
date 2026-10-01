@@ -59,6 +59,13 @@ type HighLevelComponentToolName =
 
 type WriteToolName = keyof Pick<
   typeof toolInputSchemas,
+  | "migrate_component_set"
+  | "repair_component_set"
+  | "clone_component_set"
+  | "merge_component_sets"
+  | "split_component_set"
+  | "migrate_instances"
+  | "reconcile_component_set"
   | "create_frame"
   | "create_component"
   | "create_instance"
@@ -390,6 +397,27 @@ export function registerTools(server: McpServer, node: Node): void {
     );
   };
 
+  registerWriteTool("migrate_component_set", "Plan and migrate a component set with deterministic clone, dimension, instance remapping, and postflight verification.", (args, fileKey) =>
+    node.sendWithParams("migrate_component_set", undefined, args, fileKey)
+  );
+  registerWriteTool("repair_component_set", "Repair a component set using deterministic, fail-closed reconciliation.", (args, fileKey) =>
+    node.sendWithParams("repair_component_set", undefined, args, fileKey)
+  );
+  registerWriteTool("clone_component_set", "Clone a component set before mutation.", (args, fileKey) =>
+    node.sendWithParams("clone_component_set", undefined, args, fileKey)
+  );
+  registerWriteTool("merge_component_sets", "Merge component sets with deterministic deduplication.", (args, fileKey) =>
+    node.sendWithParams("merge_component_sets", undefined, args, fileKey)
+  );
+  registerWriteTool("split_component_set", "Split a component set into deterministic groups.", (args, fileKey) =>
+    node.sendWithParams("split_component_set", undefined, args, fileKey)
+  );
+  registerWriteTool("migrate_instances", "Classify and remap instances to a target component set.", (args, fileKey) =>
+    node.sendWithParams("migrate_instances", undefined, args, fileKey)
+  );
+  registerWriteTool("reconcile_component_set", "Run idempotent postflight reconciliation against an expected component set shape.", (args, fileKey) =>
+    node.sendWithParams("reconcile_component_set", undefined, args, fileKey)
+  );
   registerWriteTool("create_frame", "Create a frame.", (args, fileKey) =>
     node.sendWithParams("create_frame", undefined, args, fileKey)
   );
