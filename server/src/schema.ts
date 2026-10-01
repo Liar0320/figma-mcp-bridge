@@ -179,8 +179,52 @@ const localComponentsPaginationFields = {
     .optional()
     .describe("Best-effort scan time budget in milliseconds before returning partial results and warnings."),
 };
-
+const componentDimension = z.object({
+  name: z.string().min(1),
+  values: z.array(z.string().min(1)).min(1),
+});
+const componentTargetProperty = z.object({
+  name: z.string().min(1),
+  type: componentPropertyType,
+  defaultValue: componentPropertyValue.optional(),
+  variantOptions: z.array(z.string().min(1)).optional(),
+});
+const componentTargetSchema = z.object({
+  name: z.string().min(1).optional(),
+  dimensions: z.array(componentDimension).optional(),
+  properties: z.array(componentTargetProperty).optional(),
+  requiredBindings: z.array(z.object({
+    property: z.string().min(1),
+    nodeName: z.string().min(1).optional(),
+    type: componentPropertyType.optional(),
+  })).optional(),
+  variants: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
+  visualTemplate: z.record(z.string(), z.unknown()).optional(),
+  layoutTemplate: z.record(z.string(), z.unknown()).optional(),
+});
+const createComponentSetOptions = {
+  target: componentTargetSchema.describe("Declarative component set schema"),
+  dryRun: z.boolean().optional().default(true).describe("Preview only by default; false is the only mutating path"),
+  parentId: figmaNodeId.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  key: z.string().min(1).optional(),
+};
 export const toolInputSchemas = {
+  create_component_set: withFileKey(createComponentSetOptions),
+  inspect_component_set: withFileKey({
+    componentSetId: figmaNodeId.describe("COMPONENT_SET node ID to inspect"),
+  }),
+  validate_component_plan: withFileKey({
+    target: componentTargetSchema.describe("Declarative target component schema; validation never mutates Figma"),
+  }),
+  plan_component_migration: withFileKey({
+    componentSetId: figmaNodeId.describe("COMPONENT_SET node ID to inspect and plan against"),
+    target: componentTargetSchema.describe("Declarative target component schema; planning is always a dry run"),
+  }),
+  verify_component_set: withFileKey({
+    componentSetId: figmaNodeId.describe("COMPONENT_SET node ID to verify"),
+  }),
   get_document: withFileKey({}),
   get_selection: withFileKey({}),
   get_styles: withFileKey({}),
@@ -189,6 +233,7 @@ export const toolInputSchemas = {
   get_components: withFileKey(localComponentsPaginationFields),
   get_variable_defs: withFileKey({}),
   get_design_tokens: withFileKey({}),
+
 
   get_node: withFileKey({
     nodeId: figmaNodeId.describe("The node ID to fetch"),
@@ -545,6 +590,10 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  inspect_component_set: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),
+  validate_component_plan: (_nodeIds, params) => ({ ...params }),
+  plan_component_migration: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),
+  verify_component_set: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),
   get_document: (_nodeIds, params) => ({ ...params }),
   get_selection: (_nodeIds, params) => ({ ...params }),
   get_styles: (_nodeIds, params) => ({ ...params }),
@@ -563,6 +612,7 @@ const rpcToArgs: Record<
   apply_tokens: (nodeIds, params) => ({ nodeIds, ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
+  create_component_set: (_nodeIds, params) => ({ ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_component: (_nodeIds, params) => ({ ...params }),
   create_instance: (_nodeIds, params) => ({ ...params }),

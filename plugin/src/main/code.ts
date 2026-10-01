@@ -12,9 +12,21 @@ import {
 } from "./tokens";
 import { collectTokenUsage } from "./tokenUsage";
 import { handleWriteRequest, serializeWriteError } from "./write";
+import {
+  inspectComponentSet,
+  validateComponentPlan,
+  planComponentMigration,
+  verifyComponentSet,
+  createComponentSet,
+} from "./componentTools";
+import type { TargetSchema } from "./componentTools";
 
 type RequestType =
-  | "get_document"
+  | "inspect_component_set"
+  | "validate_component_plan"
+  | "plan_component_migration"
+  | "create_component_set"
+  | "verify_component_set"
   | "get_selection"
   | "get_node"
   | "get_styles"
@@ -89,6 +101,7 @@ type ServerRequest = {
     pageId?: string;
     cursor?: string;
     maxDurationMs?: number;
+    target?: Record<string, unknown>;
   };
 };
 
@@ -100,7 +113,10 @@ type PluginResponse = {
 };
 
 const READ_REQUEST_TYPES = new Set<RequestType>([
-  "get_document",
+  "inspect_component_set",
+  "validate_component_plan",
+  "plan_component_migration",
+  "verify_component_set",
   "get_selection",
   "get_node",
   "get_styles",
@@ -245,6 +261,16 @@ const handleRequest = async (
           },
         };
       }
+      case "inspect_component_set":
+        return { type: request.type, requestId: request.requestId, data: await inspectComponentSet(request.nodeIds?.[0] ?? "") };
+      case "validate_component_plan":
+        return { type: request.type, requestId: request.requestId, data: validateComponentPlan(request.params?.target ?? {}) };
+      case "plan_component_migration":
+        return { type: request.type, requestId: request.requestId, data: await planComponentMigration(request.nodeIds?.[0] ?? "", request.params?.target ?? {}) };
+      case "create_component_set":
+        return { type: request.type, requestId: request.requestId, data: await createComponentSet(request.params?.target ?? {}, request.params) };
+      case "verify_component_set":
+        return { type: request.type, requestId: request.requestId, data: await verifyComponentSet(request.nodeIds?.[0] ?? "") };
       case "get_local_components":
       case "get_components": {
         return {
@@ -517,7 +543,6 @@ const handleRequest = async (
           },
         };
       }
-      case "create_frame":
       case "create_component":
       case "create_instance":
       case "combine_as_variants":

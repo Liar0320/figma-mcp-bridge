@@ -50,6 +50,13 @@ interface SaveScreenshotItemResult {
   error?: string;
 }
 
+type HighLevelComponentToolName =
+  | "inspect_component_set"
+  | "validate_component_plan"
+  | "plan_component_migration"
+  | "create_component_set"
+  | "verify_component_set"
+
 type WriteToolName = keyof Pick<
   typeof toolInputSchemas,
   | "create_frame"
@@ -139,6 +146,45 @@ export function registerTools(server: McpServer, node: Node): void {
       return renderResponse(() => node.send("get_metadata", undefined, fileKey));
     }
   );
+  server.tool(
+    "inspect_component_set",
+    "Inspect a component set and return normalized schema and deterministic health diagnostics. Read-only.",
+    toolInputSchemas.inspect_component_set.shape,
+    async ({ componentSetId, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.send("inspect_component_set", [componentSetId], fileKey))
+  );
+
+  server.tool(
+    "validate_component_plan",
+    "Validate a declarative component target schema without reading or mutating Figma.",
+    toolInputSchemas.validate_component_plan.shape,
+    async ({ target, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("validate_component_plan", undefined, { target }, fileKey))
+  );
+
+  server.tool(
+    "plan_component_migration",
+    "Produce a deterministic dry-run component migration plan. Never mutates Figma.",
+    toolInputSchemas.plan_component_migration.shape,
+    async ({ componentSetId, target, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("plan_component_migration", [componentSetId], { target }, fileKey))
+  );
+
+  server.tool(
+    "verify_component_set",
+    "Re-read a component set and report schema, variant-count, property, and serialization-health checks. Read-only.",
+    toolInputSchemas.verify_component_set.shape,
+    async ({ componentSetId, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.send("verify_component_set", [componentSetId], fileKey))
+  );
+  server.tool(
+    "create_component_set",
+    "Create a declared-schema component set and deterministic variant matrix. Dry-run by default; only dryRun=false mutates Figma.",
+    toolInputSchemas.create_component_set.shape,
+    async ({ target, dryRun, parentId, x, y, key, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("create_component_set", undefined, { target, dryRun, parentId, x, y, key }, fileKey))
+  );
+
 
   server.tool(
     "get_local_components",
