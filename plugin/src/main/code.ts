@@ -20,6 +20,7 @@ import {
   createComponentSet,
 } from "./componentTools";
 import type { TargetSchema } from "./componentTools";
+import { migrateComponentSet, repairComponentSet, buildReconciliationPlan, verifyPostflight } from "./componentMigration";
 
 type RequestType =
   | "inspect_component_set"
@@ -70,7 +71,11 @@ type RequestType =
   | "rename_node"
   | "find_nodes"
   | "delete_node"
-  | "batch_mutation";
+  | "batch_mutation"
+  | "migrate_component_set"
+  | "repair_component_set"
+  | "reconcile_component_instances"
+  | "verify_component_migration";
 
 type ServerRequest = {
   type: RequestType;
@@ -103,6 +108,11 @@ type ServerRequest = {
     cursor?: string;
     maxDurationMs?: number;
     target?: Record<string, unknown>;
+    source?: Record<string, unknown>;
+    target?: Record<string, unknown>;
+    instances?: Array<Record<string, unknown>>;
+    expected?: Array<Record<string, unknown>>;
+    actual?: Array<Record<string, unknown>>;
   };
 };
 
@@ -544,6 +554,21 @@ const handleRequest = async (
           },
         };
       }
+      case "migrate_component_set": {
+        if (!request.params?.source || !request.params?.target) throw new Error("source and target are required");
+        return { type: request.type, requestId: request.requestId, data: migrateComponentSet(request.params.source as any, request.params.target as any, (request.params.instances ?? []) as any) };
+      }
+      case "repair_component_set": {
+        if (!request.params?.source || !request.params?.target) throw new Error("source and target are required");
+        return { type: request.type, requestId: request.requestId, data: repairComponentSet(request.params.source as any, request.params.target as any) };
+      }
+      case "reconcile_component_instances": {
+        return { type: request.type, requestId: request.requestId, data: buildReconciliationPlan((request.params?.instances ?? []) as any, (request.params?.target ? [request.params.target] : []) as any) };
+      }
+      case "verify_component_migration": {
+        return { type: request.type, requestId: request.requestId, data: verifyPostflight((request.params?.expected ?? []) as any, (request.params?.actual ?? []) as any) };
+      }
+      case "create_frame":
       case "create_component":
       case "create_instance":
       case "combine_as_variants":
