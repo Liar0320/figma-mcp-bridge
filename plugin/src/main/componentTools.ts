@@ -417,6 +417,34 @@ export const verifyComponentSet = async (nodeId: string): Promise<ComponentSetVe
   return { version: 1, nodeId, healthy: inspected.healthy && checks.every((check) => check.passed), checks, normalized: inspected, diagnostics: inspected.diagnostics };
 };
 
+export type VisualStylePlan = {
+  source: "built-in" | "template";
+  kind: "Button" | "custom";
+  variants: Array<{
+    tuple: string[];
+    fill?: string;
+    stroke?: string;
+    strokeWeight?: number;
+    textColor?: string;
+    opacity?: number;
+    height?: number;
+    paddingX?: number;
+    paddingY?: number;
+    radius?: number;
+    gap?: number;
+    fontFamily?: string;
+    fontStyle?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    iconSize?: number;
+    iconVisible?: boolean;
+    iconRotation?: number;
+    layoutMode?: "HORIZONTAL" | "VERTICAL";
+    primaryAxisAlignItems?: string;
+    counterAxisAlignItems?: string;
+  }>;
+};
+
 export type CreateComponentSetResult = {
   version: 1;
   dryRun: boolean;
@@ -425,10 +453,145 @@ export type CreateComponentSetResult = {
   expectedVariantCount: number;
   target: NormalizedTarget;
   propertySummary: Array<{ name: string; type: string; bindings: number }>;
+  visualPlan?: VisualStylePlan;
   warnings: ComponentDiagnostic[];
   verification?: ComponentSetVerification;
   rollback?: { attempted: boolean; completed: boolean; removedNodeIds: string[] };
   valid: boolean;
+};
+
+const BUTTON_DEFAULTS = {
+  stateStyles: {
+    Default: { color: "#3D6DFF" },
+    Hover: { color: "#6691FF" },
+    Active: { color: "#294FD9" },
+    Disabled: { color: "#3D6DFF", opacity: 0.3 },
+  },
+  typeStyles: {
+    Primary: { fill: "{state}", textColor: "#FFFFFF" },
+    Ghost: { stroke: "{state}", textColor: "{state}", strokeWeight: 1 },
+    Text: { textColor: "{state}" },
+  },
+  sizeStyles: {
+    Small: { height: 32, paddingX: 16, paddingY: 6, radius: 20, fontSize: 14, lineHeight: 20 },
+    Medium: { height: 44, paddingX: 22, paddingY: 10, radius: 1000, fontSize: 16, lineHeight: 24 },
+    Large: { height: 52, paddingX: 28, paddingY: 12, radius: 32, fontSize: 20, lineHeight: 28 },
+  },
+  iconStyles: {
+    None: { iconVisible: false, iconSize: 18, iconRotation: 0 },
+    Right: { iconVisible: true, iconSize: 18, iconRotation: 0 },
+    Up: { iconVisible: true, iconSize: 18, iconRotation: 90 },
+  },
+  typography: { fontFamily: "Inter", fontStyle: "Semi Bold" },
+} as const;
+
+const recordValue = (value: unknown, key: string): Record<string, unknown> => asRecord(asRecord(value)[key]);
+const stringValue = (value: unknown, key: string): string | undefined => {
+  const result = asRecord(value)[key];
+  return typeof result === "string" ? result : undefined;
+};
+const numberValue = (value: unknown, key: string): number | undefined => {
+  const result = asRecord(value)[key];
+  return typeof result === "number" && Number.isFinite(result) ? result : undefined;
+};
+const boolValue = (value: unknown, key: string): boolean | undefined => {
+  const result = asRecord(value)[key];
+  return typeof result === "boolean" ? result : undefined;
+};
+
+/** Returns a stable, serializable style plan without reading or mutating Figma. */
+export const planComponentVisuals = (target: TargetSchema, normalized: NormalizedTarget): VisualStylePlan | undefined => {
+  const isButton = target.name?.trim() === "Button";
+  const template = asRecord(target.visualTemplate);
+  if (!isButton && Object.keys(template).length === 0) return undefined;
+  const source = Object.keys(template).length === 0 ? "built-in" : "template";
+  const kind = isButton ? "Button" : "custom";
+  const stateStyles = isButton ? { ...BUTTON_DEFAULTS.stateStyles, ...asRecord(template.stateStyles) } : asRecord(template.stateStyles);
+  const typeStyles = isButton ? { ...BUTTON_DEFAULTS.typeStyles, ...asRecord(template.typeStyles) } : asRecord(template.typeStyles);
+  const sizeStyles = isButton ? { ...BUTTON_DEFAULTS.sizeStyles, ...asRecord(template.sizeStyles) } : asRecord(template.sizeStyles);
+  const iconStyles = isButton ? { ...BUTTON_DEFAULTS.iconStyles, ...asRecord(template.iconStyles) } : asRecord(template.iconStyles);
+  const typography = isButton ? { ...BUTTON_DEFAULTS.typography, ...asRecord(template.typography) } : asRecord(template.typography);
+  const variants = normalized.variants.map((tuple) => {
+    const byName: Record<string, string> = {};
+    normalized.dimensions.forEach((dimension, index) => { byName[dimension.name] = tuple[index]; });
+    const state = recordValue(stateStyles, byName.State);
+    const type = recordValue(typeStyles, byName.Type);
+    const size = recordValue(sizeStyles, byName.Size);
+    const icon = recordValue(iconStyles, byName.Icon);
+    const stateColor = stringValue(state, "color") ?? stringValue(state, "textColor");
+    const resolveColor = (value: string | undefined): string | undefined => value === "{state}" ? stateColor : value;
+    const fill = resolveColor(stringValue(type, "fill") ?? stringValue(state, "fill"));
+    const stroke = resolveColor(stringValue(type, "stroke") ?? stringValue(state, "stroke"));
+    const textColor = resolveColor(stringValue(type, "textColor") ?? stringValue(state, "textColor") ?? ((byName.Type === "Ghost" || byName.Type === "Text") ? stateColor : undefined));
+    const strokeWeight = numberValue(type, "strokeWeight") ?? numberValue(state, "strokeWeight");
+    const gap = numberValue(size, "gap") ?? numberValue(template, "gap") ?? (isButton ? 8 : undefined);
+    const fontSize = numberValue(typography, "fontSize") ?? numberValue(size, "fontSize");
+    const lineHeight = numberValue(typography, "lineHeight") ?? numberValue(size, "lineHeight");
+    return {
+      tuple,
+      ...(fill ? { fill } : {}),
+      ...(stroke ? { stroke } : {}),
+      ...(strokeWeight !== undefined ? { strokeWeight } : {}),
+      ...(textColor ? { textColor } : {}),
+      ...(numberValue(state, "opacity") !== undefined ? { opacity: numberValue(state, "opacity") } : {}),
+      ...(numberValue(size, "height") !== undefined ? { height: numberValue(size, "height") } : {}),
+      ...(numberValue(size, "paddingX") !== undefined ? { paddingX: numberValue(size, "paddingX") } : {}),
+      ...(numberValue(size, "paddingY") !== undefined ? { paddingY: numberValue(size, "paddingY") } : {}),
+      ...(numberValue(size, "radius") !== undefined ? { radius: numberValue(size, "radius") } : {}),
+      ...(gap !== undefined ? { gap } : {}),
+      ...(stringValue(typography, "fontFamily") ? { fontFamily: stringValue(typography, "fontFamily") } : {}),
+      ...(stringValue(typography, "fontStyle") ? { fontStyle: stringValue(typography, "fontStyle") } : {}),
+      ...(fontSize !== undefined ? { fontSize } : {}),
+      ...(lineHeight !== undefined ? { lineHeight } : {}),
+      ...(boolValue(icon, "iconVisible") !== undefined ? { iconVisible: boolValue(icon, "iconVisible") } : {}),
+      ...(numberValue(icon, "iconSize") !== undefined ? { iconSize: numberValue(icon, "iconSize") } : {}),
+      ...(numberValue(icon, "iconRotation") !== undefined ? { iconRotation: numberValue(icon, "iconRotation") } : {}),
+      layoutMode: (stringValue(template, "layoutMode") as "HORIZONTAL" | "VERTICAL" | undefined) ?? "HORIZONTAL",
+      primaryAxisAlignItems: stringValue(template, "primaryAxisAlignItems") ?? "CENTER",
+      counterAxisAlignItems: stringValue(template, "counterAxisAlignItems") ?? "CENTER",
+    };
+  });
+  return { source, kind, variants };
+};
+
+const hexColor = (value: string): RGB | undefined => {
+  const match = /^#([0-9a-f]{6})$/i.exec(value.trim());
+  if (!match) return undefined;
+  const number = Number.parseInt(match[1], 16);
+  return { r: ((number >> 16) & 255) / 255, g: ((number >> 8) & 255) / 255, b: (number & 255) / 255 };
+};
+
+const solidPaint = (value: string): Paint | undefined => {
+  const color = hexColor(value);
+  return color ? { type: "SOLID", color } : undefined;
+};
+
+const applyVisualVariant = (component: ComponentNode, label: TextNode | undefined, icon: RectangleNode | undefined, style: VisualStylePlan["variants"][number]): void => {
+  const frame = component as ComponentNode & Record<string, any>;
+  if (style.fill) { const paint = solidPaint(style.fill); if (paint) frame.fills = [paint]; }
+  else if (style.fill === undefined && style.stroke) frame.fills = [];
+  if (style.stroke) { const paint = solidPaint(style.stroke); if (paint) { frame.strokes = [paint]; frame.strokeWeight = style.strokeWeight ?? 1; } }
+  else if (style.stroke === undefined) frame.strokes = [];
+  if (style.opacity !== undefined) frame.opacity = style.opacity;
+  if (style.layoutMode) frame.layoutMode = style.layoutMode;
+  frame.primaryAxisAlignItems = (style.primaryAxisAlignItems ?? "CENTER") as ComponentNode["primaryAxisAlignItems"];
+  frame.counterAxisAlignItems = (style.counterAxisAlignItems ?? "CENTER") as ComponentNode["counterAxisAlignItems"];
+  if (style.gap !== undefined) frame.itemSpacing = style.gap;
+  if (style.paddingX !== undefined) { frame.paddingLeft = style.paddingX; frame.paddingRight = style.paddingX; }
+  if (style.paddingY !== undefined) { frame.paddingTop = style.paddingY; frame.paddingBottom = style.paddingY; }
+  if (style.height !== undefined) { frame.counterAxisSizingMode = "FIXED"; frame.resize(frame.width, style.height); }
+  if (style.radius !== undefined) frame.cornerRadius = style.radius;
+  if (label) {
+    if (style.textColor) { const paint = solidPaint(style.textColor); if (paint) label.fills = [paint]; }
+    if (style.fontFamily && style.fontStyle) label.fontName = { family: style.fontFamily, style: style.fontStyle };
+    if (style.fontSize !== undefined) label.fontSize = style.fontSize;
+    if (style.lineHeight !== undefined) label.lineHeight = { unit: "PIXELS", value: style.lineHeight };
+  }
+  if (icon) {
+    if (style.iconSize !== undefined) icon.resize(style.iconSize, style.iconSize);
+    if (style.iconVisible !== undefined) icon.visible = style.iconVisible;
+    if (style.iconRotation !== undefined) icon.rotation = style.iconRotation;
+  }
 };
 
 const createDiagnostic = (code: string, message: string, path?: string): ComponentDiagnostic => ({
@@ -449,6 +612,7 @@ export const createComponentSet = async (target: TargetSchema, options?: {
   const validation = validateTargetSchema(target);
   const dryRun = options?.dryRun !== false;
   const warnings: ComponentDiagnostic[] = [];
+  const visualPlan = planComponentVisuals(target, validation.normalized);
   const propertySummary = validation.normalized.properties
     .filter((property) => property.type !== "VARIANT")
     .map((property) => ({ name: property.name, type: property.type, bindings: 0 }));
@@ -458,23 +622,21 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     variantCount: 0,
     expectedVariantCount: validation.expectedVariantCount,
     target: validation.normalized,
-    propertySummary,
+    ...(visualPlan ? { visualPlan } : {}),
     warnings,
     valid: validation.valid,
   };
-  if (!validation.valid) return { ...base, warnings: validation.diagnostics, valid: false };
+  if (!validation.valid) return { ...base, propertySummary, warnings: validation.diagnostics, valid: false };
   if (dryRun) {
-    return {
-      ...base,
-      warnings: [...warnings, ...((target.visualTemplate || target.layoutTemplate) ? [
-        { code: "TEMPLATE_PREVIEW_ONLY", severity: "warning", message: "Visual/layout templates are recorded for preview; no Figma mutation occurs in dry-run mode." } satisfies ComponentDiagnostic,
-      ] : [])],
-      valid: true,
-    };
+    return { ...base, propertySummary, warnings: [...warnings, ...((target.visualTemplate || target.layoutTemplate) ? [
+      { code: "TEMPLATE_PREVIEW_ONLY", severity: "warning", message: "Visual/layout templates are recorded for preview; no Figma mutation occurs in dry-run mode." } satisfies ComponentDiagnostic,
+    ] : [])], valid: true };
   }
 
   const created: BaseNode[] = [];
-  await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+  const fontFamily = visualPlan?.variants[0]?.fontFamily ?? "Inter";
+  const fontStyle = visualPlan?.variants[0]?.fontStyle ?? "Regular";
+  await figma.loadFontAsync({ family: fontFamily, style: fontStyle });
   let componentSet: ComponentSetNode | undefined;
   try {
     let parent: BaseNode & ChildrenMixin = figma.currentPage;
@@ -498,25 +660,29 @@ export const createComponentSet = async (target: TargetSchema, options?: {
       components.push(component);
 
       const labelProperty = validation.normalized.properties.find((property) => property.name === "Label" && property.type === "TEXT");
+      let label: TextNode | undefined;
       if (labelProperty) {
-        const label = figma.createText();
+        label = figma.createText();
         created.push(label);
         label.name = "Label";
         label.characters = typeof labelProperty.defaultValue === "string" ? labelProperty.defaultValue : "";
         component.appendChild(label);
       }
       const iconProperty = validation.normalized.properties.find((property) => property.name === "Show Icon" && property.type === "BOOLEAN");
+      let icon: RectangleNode | undefined;
       if (iconProperty) {
-        const icon = figma.createRectangle();
+        icon = figma.createRectangle();
         created.push(icon);
         icon.name = "Icon";
         icon.visible = iconProperty.defaultValue !== false;
         icon.resize(16, 16);
         component.appendChild(icon);
       }
+      const style = visualPlan?.variants.find((item) => item.tuple.join("\u0000") === tuple.join("\u0000"));
+      if (style) applyVisualVariant(component, label, icon, style);
       const layout = (target.layoutTemplate ?? {}) as Record<string, unknown>;
-      if (typeof layout.layoutMode === "string") component.layoutMode = layout.layoutMode as BaseFrameMixin["layoutMode"];
-      if (typeof layout.itemSpacing === "number") component.itemSpacing = layout.itemSpacing;
+      if (!style && typeof layout.layoutMode === "string") component.layoutMode = layout.layoutMode as BaseFrameMixin["layoutMode"];
+      if (!style && typeof layout.itemSpacing === "number") component.itemSpacing = layout.itemSpacing;
     }
     if (components.length < 1) throw Object.assign(new Error("Target schema produced no variants"), { mutationError: { code: "INVALID_SCHEMA", message: "Target schema produced no variants" } });
     componentSet = figma.combineAsVariants(components, parent as BaseNode & ChildrenMixin);
@@ -565,6 +731,6 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     const roots: BaseNode[] = componentSet ? [componentSet] : created;
     for (const node of roots) { try { const id = node.id; node.remove(); removedNodeIds.push(id); } catch { /* best-effort compensation */ } }
     const diagnostic = createDiagnostic("CREATE_FAILED", error instanceof Error ? error.message : String(error));
-    return { ...base, warnings: [diagnostic], rollback: { attempted: true, completed: removedNodeIds.length === roots.length, removedNodeIds }, valid: false };
+    return { ...base, propertySummary, warnings: [diagnostic], rollback: { attempted: true, completed: removedNodeIds.length === roots.length, removedNodeIds }, valid: false };
   }
 };

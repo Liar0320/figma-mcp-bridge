@@ -1,5 +1,54 @@
 import assert from "node:assert/strict";
-import { normalizeComponentSetNode, validateComponentPlan } from "../dist-test/src/main/componentTools.js";
+import { normalizeComponentSetNode, validateComponentPlan, createComponentSet } from "../dist-test/src/main/componentTools.js";
+
+const buttonTarget = {
+  name: "Button",
+  dimensions: [
+    { name: "Type", values: ["Primary", "Ghost", "Text"] },
+    { name: "State", values: ["Default", "Hover", "Active", "Disabled"] },
+    { name: "Size", values: ["Small", "Medium", "Large"] },
+    { name: "Icon", values: ["None", "Right", "Up"] },
+  ],
+  properties: [
+    { name: "Label", type: "TEXT", defaultValue: "Continue" },
+    { name: "Show Icon", type: "BOOLEAN", defaultValue: true },
+  ],
+};
+const buttonValidation = validateComponentPlan(buttonTarget);
+const { planComponentVisuals } = await import("../dist-test/src/main/componentTools.js");
+const visualPlan = planComponentVisuals(buttonTarget, buttonValidation.normalized);
+assert.equal(visualPlan?.source, "built-in");
+assert.equal(visualPlan?.variants.length, 108);
+const tupleVariant = (plan, values) => plan?.variants.find((item) => item.tuple.every((value, index) => value === values[buttonValidation.normalized.dimensions[index].name]));
+const primaryDefaultSmall = tupleVariant(visualPlan, { Type: "Primary", State: "Default", Size: "Small", Icon: "None" });
+assert.deepEqual(primaryDefaultSmall && {
+  fill: primaryDefaultSmall.fill,
+  height: primaryDefaultSmall.height,
+  paddingX: primaryDefaultSmall.paddingX,
+  paddingY: primaryDefaultSmall.paddingY,
+  radius: primaryDefaultSmall.radius,
+  gap: primaryDefaultSmall.gap,
+  fontSize: primaryDefaultSmall.fontSize,
+  lineHeight: primaryDefaultSmall.lineHeight,
+  iconVisible: primaryDefaultSmall.iconVisible,
+}, {
+  fill: "#3D6DFF", height: 32, paddingX: 16, paddingY: 6, radius: 20, gap: 8,
+  fontSize: 14, lineHeight: 20, iconVisible: false,
+});
+const ghostHoverMedium = tupleVariant(visualPlan, { Type: "Ghost", State: "Hover", Size: "Medium", Icon: "Right" });
+assert.equal(ghostHoverMedium?.stroke, "#6691FF");
+assert.equal(ghostHoverMedium?.textColor, "#6691FF");
+assert.equal(ghostHoverMedium?.iconRotation, 0);
+const textDisabledLargeUp = tupleVariant(visualPlan, { Type: "Text", State: "Disabled", Size: "Large", Icon: "Up" });
+assert.equal(textDisabledLargeUp?.opacity, 0.3);
+assert.equal(textDisabledLargeUp?.iconRotation, 90);
+
+const dryRunResult = await createComponentSet(buttonTarget);
+assert.equal(dryRunResult.dryRun, true);
+assert.equal(dryRunResult.valid, true);
+assert.equal(dryRunResult.variantCount, 0);
+assert.equal(dryRunResult.visualPlan?.variants.length, 108);
+assert.equal(textDisabledLargeUp?.iconSize, 18);
 
 const target = {
   dimensions: [

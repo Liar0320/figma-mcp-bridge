@@ -66,6 +66,11 @@ fix(tokens): preserve Unicode token path segments
 BREAKING CHANGE: token paths for non-ASCII variable names now preserve Unicode instead of ASCII slugifying them.
 ```
 
+## Restart the Figma plugin after plugin changes
+
+For every task changing `plugin/` runtime code: build, then restart **Figma MCP Bridge inside Figma**, then exercise the changed behavior. Follow `.agents/skills/figma-plugin-restart/SKILL.md`. A server restart or pre-existing WebSocket connection is not proof of a plugin restart.
+
+
 ## Validation before PR
 
 Before opening a PR, run the checks relevant to touched code. For broad repository changes, run:
