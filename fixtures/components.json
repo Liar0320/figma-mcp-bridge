@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "fixtures": [
+    { "kind": "healthy", "expected": { "componentCount": 3, "duplicateIds": [], "corruptedIds": [] } },
+    { "kind": "sparse", "expected": { "componentCount": 0, "duplicateIds": [], "corruptedIds": [] } },
+    { "kind": "duplicate", "expected": { "componentCount": 3, "duplicateIds": ["2:1"], "corruptedIds": [] } },
+    { "kind": "corrupted", "expected": { "componentCount": 4, "duplicateIds": [], "corruptedIds": ["bad"] } }
+  ]
+}

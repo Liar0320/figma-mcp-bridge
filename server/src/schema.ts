@@ -200,36 +200,10 @@ const localComponentsPaginationFields = {
     .optional()
     .describe("Best-effort scan time budget in milliseconds before returning partial results and warnings."),
 };
-const componentDimension = z.object({
-  name: z.string().min(1),
-  values: z.array(z.string().min(1)).min(1),
-});
-const componentTargetProperty = z.object({
-  name: z.string().min(1),
-  type: componentPropertyType,
-  defaultValue: componentPropertyValue.optional(),
-  variantOptions: z.array(z.string().min(1)).optional(),
-});
-const componentTargetSchema = z.object({
-  name: z.string().min(1).optional(),
-  dimensions: z.array(componentDimension).optional(),
-  properties: z.array(componentTargetProperty).optional(),
-  requiredBindings: z.array(z.object({
-    property: z.string().min(1),
-    nodeName: z.string().min(1).optional(),
-    type: componentPropertyType.optional(),
-  })).optional(),
-  variants: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
-  visualTemplate: z.record(z.string(), z.unknown()).optional(),
-  layoutTemplate: z.record(z.string(), z.unknown()).optional(),
-});
-const createComponentSetOptions = {
-  target: componentTargetSchema.describe("Declarative component set schema"),
-  dryRun: z.boolean().optional().default(true).describe("Preview only by default; false is the only mutating path"),
-  parentId: figmaNodeId.optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  key: z.string().min(1).optional(),
+const componentReliabilityFields = {
+  chunkSize: z.number().int().min(1).max(500).optional(),
+  baseline: z.string().min(1).optional(),
+  journalId: z.string().min(1).optional(),
 };
 export const toolInputSchemas = {
   create_component_set: withFileKey(createComponentSetOptions),
@@ -252,6 +226,14 @@ export const toolInputSchemas = {
   get_metadata: withFileKey({}),
   get_local_components: withFileKey(localComponentsPaginationFields),
   get_components: withFileKey(localComponentsPaginationFields),
+  get_component_matrix: withFileKey({ ...localComponentsPaginationFields, ...componentReliabilityFields }),
+  get_operation_journal: withFileKey({}),
+  rollback_operation: withFileKey({ journalId: z.string().min(1) }),
+  get_component_screenshot_report: withFileKey({
+    nodeIds: z.array(figmaNodeId).min(1),
+    format: exportFormat.optional(),
+    baseline: z.string().min(1).optional(),
+  }),
   get_variable_defs: withFileKey({}),
   get_design_tokens: withFileKey({}),
 

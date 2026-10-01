@@ -223,6 +223,35 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "get_component_matrix",
+    "Return component metadata in resumable chunks for large component matrices.",
+    toolInputSchemas.get_component_matrix.shape,
+    async ({ fileKey, limit, pageId, cursor, maxDurationMs, chunkSize }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("get_component_matrix", undefined, { limit, pageId, cursor, maxDurationMs, chunkSize }, fileKey))
+  );
+
+  server.tool(
+    "get_operation_journal",
+    "Read the session-scoped component write operation journal.",
+    toolInputSchemas.get_operation_journal.shape,
+    async ({ fileKey }): Promise<ToolResult> => renderResponse(() => node.send("get_operation_journal", undefined, fileKey))
+  );
+
+  server.tool(
+    "rollback_operation",
+    "Rollback nodes created by a journaled component operation when supported.",
+    toolInputSchemas.rollback_operation.shape,
+    async ({ journalId, fileKey }): Promise<ToolResult> => renderResponse(() => node.sendWithParams("rollback_operation", undefined, { journalId }, fileKey))
+  );
+
+  server.tool(
+    "get_component_screenshot_report",
+    "Create a structured screenshot capture report for component nodes.",
+    toolInputSchemas.get_component_screenshot_report.shape,
+    async ({ nodeIds, format, baseline, fileKey }): Promise<ToolResult> => renderResponse(() => node.sendWithParams("get_component_screenshot_report", nodeIds, { format, baseline }, fileKey))
+  );
+
+  server.tool(
     "get_design_context",
     "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context.",
     toolInputSchemas.get_design_context.shape,

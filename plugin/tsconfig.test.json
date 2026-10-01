@@ -20,11 +20,16 @@
     "src/main/tokenApply.ts",
     "src/main/tokenExport.ts",
     "src/main/tokens.ts",
-    "src/main/components.ts",
 <<<<<<< HEAD
-    "src/main/componentTools.ts"
+    "src/main/components.ts",
+    "src/main/componentTools.ts",
+    "src/main/componentMigration.ts",
+    "src/main/componentReliability.ts",
+    "src/main/operationJournal.ts"
 =======
-    "src/main/componentMigration.ts"
->>>>>>> 7ef892d (feat(plugin): wire component migration reconciliation RPCs)
+    "src/main/components.ts"
+    ,"src/main/componentReliability.ts"
+    ,"src/main/operationJournal.ts"
+>>>>>>> 58e1e4c (feat(test): add component reliability acceptance layer)
   ]
 }

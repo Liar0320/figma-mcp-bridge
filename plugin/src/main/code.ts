@@ -21,6 +21,8 @@ import {
 } from "./componentTools";
 import type { TargetSchema } from "./componentTools";
 import { migrateComponentSet, repairComponentSet, buildReconciliationPlan, verifyPostflight } from "./componentMigration";
+import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack } from "./operationJournal";
+import { chunkMatrix, createScreenshotReport, componentError, serializeComponentError } from "./componentReliability";
 
 type RequestType =
   | "inspect_component_set"
@@ -79,6 +81,10 @@ type RequestType =
   | "split_component_set"
   | "migrate_instances"
   | "reconcile_component_set";
+  | "get_operation_journal"
+  | "rollback_operation"
+  | "get_component_matrix"
+  | "get_component_screenshot_report";
 
 type ServerRequest = {
   type: RequestType;
@@ -127,6 +133,9 @@ type ServerRequest = {
     dimensions?: Array<Record<string, unknown>>;
     groups?: Array<Record<string, unknown>>;
     deleteSource?: boolean;
+    chunkSize?: number;
+    journalId?: string;
+    baseline?: string;
   };
 
 type PluginResponse = {
@@ -155,6 +164,9 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "propose_design_tokens",
   "export_design_tokens",
   "get_screenshot",
+  "get_component_matrix",
+  "get_component_screenshot_report",
+  "get_operation_journal",
 ]);
 
 const pluginSessionId = `session-${Date.now().toString(36)}-${Math.random()
@@ -307,6 +319,44 @@ const handleRequest = async (
             maxDurationMs: request.params?.maxDurationMs,
           }),
         };
+      }
+      case "get_component_matrix": {
+        const inventory = await collectLocalComponents({
+          pageId: request.params?.pageId,
+          maxDurationMs: request.params?.maxDurationMs,
+        });
+        const matrix = inventory.components.map((component) => ({
+          componentId: component.componentId,
+          name: component.name,
+          type: component.type,
+          componentSetId: component.componentSetId,
+          variantProperties: component.variantProperties,
+        }));
+        return { type: request.type, requestId: request.requestId, data: chunkMatrix(matrix, request.params?.chunkSize ?? 50, request.params?.cursor) };
+      }
+      case "get_operation_journal":
+        return { type: request.type, requestId: request.requestId, data: { version: 1, entries: listOperations() } };
+      case "rollback_operation": {
+        const entry = request.params?.journalId ? getOperation(request.params.journalId) : undefined;
+        if (!entry) throw componentError("COMPONENT_NOT_FOUND", "Operation journal entry not found", { journalId: request.params?.journalId });
+        if (!entry.rollback?.supported || !entry.rollback.nodeIds?.length) throw componentError("RECOVERY_UNSUPPORTED", "Operation cannot be rolled back automatically");
+        const removed: string[] = [];
+        for (const id of entry.rollback.nodeIds) {
+          const node = await figma.getNodeByIdAsync(id);
+          if (node && node.type !== "DOCUMENT" && node.type !== "PAGE") { node.remove(); removed.push(id); }
+        }
+        markRolledBack(entry);
+        return { type: request.type, requestId: request.requestId, data: { journalId: entry.journalId, removed, status: entry.status } };
+      }
+      case "get_component_screenshot_report": {
+        const ids = request.nodeIds ?? [];
+        const reportItems = [];
+        for (const id of ids) {
+          const node = await figma.getNodeByIdAsync(id);
+          if (!node || node.type === "DOCUMENT" || node.type === "PAGE") reportItems.push({ nodeId: id, status: "missing" as const, format: request.params?.format ?? "PNG" });
+          else reportItems.push({ nodeId: id, nodeName: node.name, status: "captured" as const, format: request.params?.format ?? "PNG", width: "width" in node ? node.width : undefined, height: "height" in node ? node.height : undefined });
+        }
+        return { type: request.type, requestId: request.requestId, data: createScreenshotReport(reportItems, typeof request.params?.baseline === "string" ? request.params.baseline : undefined) };
       }
       case "get_design_context": {
         const depth = request.params?.depth ?? 2;
@@ -601,15 +651,21 @@ const handleRequest = async (
       case "find_nodes":
       case "delete_node":
       case "batch_mutation":
-        return {
-          type: request.type,
-          requestId: request.requestId,
-          data: await handleWriteRequest(
-            request.type,
-            request.nodeIds,
-            request.params as Record<string, unknown> | undefined
-          ),
-        };
+        {
+          const journal = beginOperation(request.type, request.requestId);
+          try {
+            const data = await handleWriteRequest(request.type, request.nodeIds, request.params as Record<string, unknown> | undefined);
+            finishOperation(journal, data);
+            return {
+              type: request.type,
+              requestId: request.requestId,
+              data,
+            };
+          } catch (error) {
+            failOperation(journal, serializeWriteError(error));
+            throw error;
+          }
+        }
       default:
         throw new Error(`Unknown request type: ${request.type}`);
     }
@@ -622,7 +678,7 @@ const handleRequest = async (
         ? JSON.stringify(serializeWriteError(error))
         : error instanceof Error
           ? error.message
-          : String(error),
+          : serializeComponentError(error),
     };
   }
 };
