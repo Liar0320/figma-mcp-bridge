@@ -1,4 +1,13 @@
 import { serializeNode } from "./serializer";
+import {
+  buildReconciliationPlan,
+  cloneBeforeMutate,
+  migrateComponentSet,
+  repairComponentSet,
+  verifyPostflight,
+  type ComponentSnapshot,
+  type InstanceSnapshot,
+} from "./componentMigration";
 
 const PLUGIN_NS = "codex";
 const MANAGED_KEY = "managed";
@@ -355,6 +364,18 @@ function validateWriteToolParams(
   };
 
   switch (type) {
+    case "migrate_component_set":
+    case "repair_component_set":
+    case "clone_component_set":
+    case "merge_component_sets":
+    case "split_component_set":
+    case "migrate_instances":
+    case "reconcile_component_set":
+      if (params?.dryRun !== undefined && typeof params.dryRun !== "boolean") fail("INVALID_INPUT", "dryRun must be a boolean");
+      if (params?.cloneBeforeMutate !== undefined && typeof params.cloneBeforeMutate !== "boolean") fail("INVALID_INPUT", "cloneBeforeMutate must be a boolean");
+      if (params?.failOnUnsupported !== undefined && typeof params.failOnUnsupported !== "boolean") fail("INVALID_INPUT", "failOnUnsupported must be a boolean");
+      if (params?.verify !== undefined && typeof params.verify !== "boolean") fail("INVALID_INPUT", "verify must be a boolean");
+      return;
     case "create_frame":
     case "create_component":
       if (params) validateCreateNodeBase(params);
@@ -1833,6 +1854,63 @@ async function mutateNode(
   return toMutationResult(node);
 }
 
+/** Component migration operations. Unsupported Figma APIs fail closed. */
+async function executeComponentMigration(type: string, params: RequestParams): Promise<unknown> {
+  const id = typeof params?.componentSetId === "string" ? params.componentSetId : undefined;
+  if (!id && type !== "merge_component_sets") fail("INVALID_INPUT", "componentSetId is required");
+  const node = id ? await figma.getNodeByIdAsync(id) : null;
+  if (id && (!node || node.type !== "COMPONENT_SET")) fail("INVALID_COMPONENT_SET", "componentSetId must reference a COMPONENT_SET node");
+  if (type === "clone_component_set") {
+    const clone = cloneBeforeMutate(node as ComponentSetNode) as ComponentSetNode;
+    if (params?.name && typeof params.name === "string") clone.name = params.name;
+    if (params?.parentId && typeof params.parentId === "string") {
+      const parent = await figma.getNodeByIdAsync(params.parentId);
+      if (!parent || !("appendChild" in parent)) fail("NOT_FOUND", "parentId was not found or unsupported");
+      (parent as ChildrenMixin).appendChild(clone);
+    }
+    return { nodeId: clone.id, sourceId: id, cloned: true, node: serializeNode(clone) };
+  }
+  if (type === "merge_component_sets" || type === "split_component_set") {
+    fail("UNSUPPORTED_FIGMA_API", `${type} requires component set mutation APIs unavailable in this plugin runtime`);
+  }
+  if (type === "migrate_instances") {
+    const targetId = typeof params?.targetComponentSetId === "string" ? params.targetComponentSetId : undefined;
+    if (!targetId) fail("INVALID_INPUT", "targetComponentSetId is required");
+    const target = await figma.getNodeByIdAsync(targetId);
+    if (!target || target.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", "targetComponentSetId must reference a COMPONENT_SET");
+    const ids = Array.isArray(params?.instanceIds) ? params.instanceIds.filter((x): x is string => typeof x === "string") : [];
+    const variants = (target as ComponentSetNode).children.filter((n): n is ComponentNode => n.type === "COMPONENT");
+    const remapped: unknown[] = [];
+    for (const instanceId of ids) {
+      const instance = await figma.getNodeByIdAsync(instanceId);
+      if (!instance || instance.type !== "INSTANCE") continue;
+      if (!variants.length) fail("INVALID_COMPONENT_SET", "target component set has no variants");
+      (instance as InstanceNode).swapComponent(variants[0]);
+      remapped.push({ instanceId, targetComponentId: variants[0].id });
+    }
+    return { remapped, targetComponentSetId: targetId };
+  }
+  const snapshot = { id: node!.id, name: node!.name, type: node!.type, width: (node as SceneNode).width, height: (node as SceneNode).height } as ComponentSnapshot;
+  if (type === "repair_component_set") {
+    const desired = (params?.expected && typeof params.expected === "object" ? params.expected : snapshot) as ComponentSnapshot;
+    const plan = repairComponentSet(snapshot, desired);
+    if (params?.dryRun !== false) return { plan, dryRun: true };
+    if (params?.cloneBeforeMutate !== false) cloneBeforeMutate(node as ComponentSetNode);
+    if (desired.name && desired.name !== node!.name) node!.name = desired.name;
+    return { plan, repaired: true, nodeId: node!.id };
+  }
+  if (type === "reconcile_component_set") {
+    const expected = (params?.expected && typeof params.expected === "object" ? params.expected : {}) as ComponentSnapshot;
+    return { verification: verifyPostflight([expected], [snapshot]) };
+  }
+  const target = (params?.targetComponentSetId ? await figma.getNodeByIdAsync(String(params.targetComponentSetId)) : node) as BaseNode | null;
+  const targetSnapshot = target && (target.type === "COMPONENT_SET" || target.type === "COMPONENT") ? { id: target.id, name: target.name, type: target.type, width: (target as SceneNode).width, height: (target as SceneNode).height } as ComponentSnapshot : snapshot;
+  const plan = migrateComponentSet(snapshot, targetSnapshot, []);
+  if (params?.dryRun !== false) return { plan, dryRun: true };
+  if (params?.cloneBeforeMutate !== false) cloneBeforeMutate(node as ComponentSetNode);
+  return { plan, migrated: true, nodeId: node!.id };
+}
+
 /** Dispatches a single write tool invocation to its concrete implementation. */
 async function executeWrite(type: string, nodeIds: string[] | undefined, params: RequestParams): Promise<unknown> {
   const merged: Record<string, unknown> = {
@@ -1840,6 +1918,14 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
     nodeId: nodeIds?.[0] ?? params?.nodeId,
   };
   switch (type) {
+    case "migrate_component_set":
+    case "repair_component_set":
+    case "clone_component_set":
+    case "merge_component_sets":
+    case "split_component_set":
+    case "migrate_instances":
+    case "reconcile_component_set":
+      return executeComponentMigration(type, params);
     case "create_frame":
       return createFrame(params);
     case "create_component":

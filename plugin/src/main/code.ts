@@ -75,7 +75,12 @@ type RequestType =
   | "migrate_component_set"
   | "repair_component_set"
   | "reconcile_component_instances"
-  | "verify_component_migration";
+  | "verify_component_migration"
+  | "clone_component_set"
+  | "merge_component_sets"
+  | "split_component_set"
+  | "migrate_instances"
+  | "reconcile_component_set";
 
 type ServerRequest = {
   type: RequestType;
@@ -109,12 +114,22 @@ type ServerRequest = {
     maxDurationMs?: number;
     target?: Record<string, unknown>;
     source?: Record<string, unknown>;
-    target?: Record<string, unknown>;
     instances?: Array<Record<string, unknown>>;
-    expected?: Array<Record<string, unknown>>;
+    expected?: Array<Record<string, unknown>> | Record<string, unknown>;
     actual?: Array<Record<string, unknown>>;
+    componentSetId?: string;
+    targetComponentSetId?: string;
+    instanceIds?: string[];
+    parentId?: string;
+    name?: string;
+    cloneBeforeMutate?: boolean;
+    failOnUnsupported?: boolean;
+    verify?: boolean;
+    remap?: Record<string, string>;
+    dimensions?: Array<Record<string, unknown>>;
+    groups?: Array<Record<string, unknown>>;
+    deleteSource?: boolean;
   };
-};
 
 type PluginResponse = {
   type: RequestType;
@@ -554,13 +569,26 @@ const handleRequest = async (
           },
         };
       }
+      case "clone_component_set":
+      case "merge_component_sets":
+      case "split_component_set":
+      case "migrate_instances":
+      case "reconcile_component_set": {
+        throw new Error(`UNSUPPORTED_FIGMA_API: ${request.type} requires native component migration executor`);
+      }
       case "migrate_component_set": {
-        if (!request.params?.source || !request.params?.target) throw new Error("source and target are required");
-        return { type: request.type, requestId: request.requestId, data: migrateComponentSet(request.params.source as any, request.params.target as any, (request.params.instances ?? []) as any) };
+        const source = request.params?.source as any;
+        const target = request.params?.target as any;
+        if (!source || !target) throw new Error("source and target snapshots are required for deterministic migration planning");
+        const plan = migrateComponentSet(source, target, (request.params?.instances ?? []) as any);
+        return { type: request.type, requestId: request.requestId, data: { ...plan, dryRun: request.params?.dryRun !== false, verified: request.params?.verify !== false } };
       }
       case "repair_component_set": {
-        if (!request.params?.source || !request.params?.target) throw new Error("source and target are required");
-        return { type: request.type, requestId: request.requestId, data: repairComponentSet(request.params.source as any, request.params.target as any) };
+        const source = request.params?.source as any;
+        const target = request.params?.target as any;
+        if (!source || !target) throw new Error("source and target snapshots are required for deterministic repair planning");
+        const plan = repairComponentSet(source, target);
+        return { type: request.type, requestId: request.requestId, data: { ...plan, dryRun: request.params?.dryRun !== false, verified: request.params?.verify !== false } };
       }
       case "reconcile_component_instances": {
         return { type: request.type, requestId: request.requestId, data: buildReconciliationPlan((request.params?.instances ?? []) as any, (request.params?.target ? [request.params.target] : []) as any) };
@@ -568,6 +596,11 @@ const handleRequest = async (
       case "verify_component_migration": {
         return { type: request.type, requestId: request.requestId, data: verifyPostflight((request.params?.expected ?? []) as any, (request.params?.actual ?? []) as any) };
       }
+      case "clone_component_set":
+      case "merge_component_sets":
+      case "split_component_set":
+      case "migrate_instances":
+      case "reconcile_component_set":
       case "create_frame":
       case "create_component":
       case "create_instance":
