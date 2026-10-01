@@ -260,6 +260,10 @@ export const toolInputSchemas = {
   get_component_matrix: withFileKey({ ...localComponentsPaginationFields, ...componentReliabilityFields }),
   get_operation_journal: withFileKey({}),
   rollback_operation: withFileKey({ journalId: z.string().min(1) }),
+  resume_operation: withFileKey({
+    journalId: z.string().min(1).describe("Journal entry to resume after a recoverable interruption"),
+    dryRun: z.boolean().optional().describe("Inspect the resumable plan without mutating Figma"),
+  }),
   get_component_screenshot_report: withFileKey({
     nodeIds: z.array(figmaNodeId).min(1),
     format: exportFormat.optional(),
@@ -697,6 +701,7 @@ const rpcToArgs: Record<
   get_component_matrix: (_nodeIds, params) => ({ ...params }),
   get_operation_journal: (_nodeIds, params) => ({ ...params }),
   rollback_operation: (_nodeIds, params) => ({ ...params }),
+  resume_operation: (_nodeIds, params) => ({ ...params }),
   get_component_screenshot_report: (nodeIds, params) => ({ nodeIds, ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_design_tokens: (_nodeIds, params) => ({ ...params }),

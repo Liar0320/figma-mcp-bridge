@@ -245,6 +245,14 @@ export function registerTools(server: McpServer, node: Node): void {
   );
 
   server.tool(
+    "resume_operation",
+    "Resume a recoverable component operation from its persistent journal entry.",
+    toolInputSchemas.resume_operation.shape,
+    async ({ journalId, dryRun, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("resume_operation", undefined, { journalId, dryRun }, fileKey))
+  );
+
+  server.tool(
     "get_component_screenshot_report",
     "Create a structured screenshot capture report for component nodes.",
     toolInputSchemas.get_component_screenshot_report.shape,

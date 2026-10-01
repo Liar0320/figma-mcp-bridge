@@ -83,6 +83,7 @@ type RequestType =
   | "reconcile_component_set"
   | "get_operation_journal"
   | "rollback_operation"
+  | "resume_operation"
   | "get_component_matrix"
   | "get_component_screenshot_report";
 
@@ -338,7 +339,7 @@ const handleRequest = async (
       }
       case "get_operation_journal":
         return { type: request.type, requestId: request.requestId, data: { version: 1, entries: listOperations() } };
-      case "rollback_operation": {
+    case "rollback_operation": {
         const entry = request.params?.journalId ? getOperation(request.params.journalId) : undefined;
         if (!entry) throw componentError("COMPONENT_NOT_FOUND", "Operation journal entry not found", { journalId: request.params?.journalId });
         if (!entry.rollback?.supported || !entry.rollback.nodeIds?.length) throw componentError("RECOVERY_UNSUPPORTED", "Operation cannot be rolled back automatically");
@@ -356,6 +357,15 @@ const handleRequest = async (
         entry.rollback.supported = unreverted.length === 0;
         markRolledBack(entry);
         return { type: request.type, requestId: request.requestId, data: { journalId: entry.journalId, removed, unrevertedNodeIds: unreverted, status: entry.status } };
+      }
+      case "resume_operation": {
+        const journalId = request.params?.journalId;
+        const entry = typeof journalId === "string" ? getOperation(journalId) : undefined;
+        if (!entry) throw componentError("COMPONENT_NOT_FOUND", "Operation journal entry not found", { journalId });
+        // Journal entries intentionally do not retain arbitrary mutation payloads. Resume is
+        // therefore only supported for operations that expose an explicit recoverable result;
+        // callers receive a typed error instead of a false success.
+        throw componentError("RECOVERY_UNSUPPORTED", "Operation cannot be resumed automatically; re-run the original request", { journalId, status: entry.status });
       }
       case "get_component_screenshot_report": {
         const ids = request.nodeIds ?? [];
