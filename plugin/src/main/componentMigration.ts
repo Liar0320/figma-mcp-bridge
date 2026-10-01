@@ -122,6 +122,7 @@ export function mergeComponentSets(source: ComponentSetNode, target: ComponentSe
   const variants = source.children.filter((n): n is ComponentNode => n.type === "COMPONENT");
   const targetVariants = target.children.filter((n): n is ComponentNode => n.type === "COMPONENT");
   if (!variants.length) throw new Error("EMPTY_SOURCE_SET");
+  if (!target.parent || !("children" in target.parent)) throw new Error("INVALID_TARGET_PARENT");
   for (const v of variants) v.remove();
   return figma.combineAsVariants([...targetVariants, ...variants], target.parent);
 }

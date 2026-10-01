@@ -427,6 +427,7 @@ export type VisualStylePlan = {
     strokeWeight?: number;
     textColor?: string;
     opacity?: number;
+    width?: number;
     height?: number;
     paddingX?: number;
     paddingY?: number;
@@ -443,6 +444,16 @@ export type VisualStylePlan = {
     primaryAxisAlignItems?: string;
     counterAxisAlignItems?: string;
   }>;
+};
+
+export type VariantGridPlacement = {
+  tuple: string[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  row: number;
+  column: number;
 };
 
 export type CreateComponentSetResult = {
@@ -499,6 +510,37 @@ const boolValue = (value: unknown, key: string): boolean | undefined => {
   return typeof result === "boolean" ? result : undefined;
 };
 
+const estimateTextWidth = (text: string, fontSize: number): number => Math.max(1, Math.ceil([...text].length * fontSize * 0.56));
+
+/** Stable row-major positions; each column/row reserves its widest/tallest variant. */
+export const planVariantGrid = (
+  variants: VisualStylePlan["variants"],
+  options: { originX?: number; originY?: number; gapX?: number; gapY?: number; columns?: number } = {}
+): VariantGridPlacement[] => {
+  if (!variants.length) return [];
+  const columns = Math.max(1, Math.min(options.columns ?? Math.ceil(Math.sqrt(variants.length)), variants.length));
+  const gapX = options.gapX ?? 48;
+  const gapY = options.gapY ?? 32;
+  const widths = variants.map((item) => item.width ?? 100);
+  const heights = variants.map((item) => item.height ?? 100);
+  const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...widths.filter((_, index) => index % columns === column)));
+  const rowHeights = Array.from({ length: Math.ceil(variants.length / columns) }, (_, row) => Math.max(...heights.slice(row * columns, (row + 1) * columns)));
+  const xs = columnWidths.map((_, index) => (options.originX ?? 0) + columnWidths.slice(0, index).reduce((sum, width) => sum + width + gapX, 0));
+  const ys = rowHeights.map((_, index) => (options.originY ?? 0) + rowHeights.slice(0, index).reduce((sum, height) => sum + height + gapY, 0));
+  return variants.map((item, index) => {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    return { tuple: item.tuple, x: xs[column], y: ys[row], width: widths[index], height: heights[index], row, column };
+  });
+};
+
+/** A right-pointing arrow drawn within an 18×18 vector viewport. */
+export const arrowIconGeometry = (size = 18): { width: number; height: number; path: string } => {
+  const scale = size / 18;
+  const at = (value: number) => Number((value * scale).toFixed(3));
+  return { width: size, height: size, path: `M ${at(3)} ${at(9)} L ${at(14)} ${at(9)} M ${at(9)} ${at(4)} L ${at(14)} ${at(9)} L ${at(9)} ${at(14)}` };
+};
+
 /** Returns a stable, serializable style plan without reading or mutating Figma. */
 export const planComponentVisuals = (target: TargetSchema, normalized: NormalizedTarget): VisualStylePlan | undefined => {
   const isButton = target.name?.trim() === "Button";
@@ -511,6 +553,8 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
   const sizeStyles = isButton ? { ...BUTTON_DEFAULTS.sizeStyles, ...asRecord(template.sizeStyles) } : asRecord(template.sizeStyles);
   const iconStyles = isButton ? { ...BUTTON_DEFAULTS.iconStyles, ...asRecord(template.iconStyles) } : asRecord(template.iconStyles);
   const typography = isButton ? { ...BUTTON_DEFAULTS.typography, ...asRecord(template.typography) } : asRecord(template.typography);
+  const labelDefault = normalized.properties.find((property) => property.name === "Label" && property.type === "TEXT")?.defaultValue;
+  const labelText = typeof labelDefault === "string" ? labelDefault : "";
   const variants = normalized.variants.map((tuple) => {
     const byName: Record<string, string> = {};
     normalized.dimensions.forEach((dimension, index) => { byName[dimension.name] = tuple[index]; });
@@ -527,6 +571,14 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
     const gap = numberValue(size, "gap") ?? numberValue(template, "gap") ?? (isButton ? 8 : undefined);
     const fontSize = numberValue(typography, "fontSize") ?? numberValue(size, "fontSize");
     const lineHeight = numberValue(typography, "lineHeight") ?? numberValue(size, "lineHeight");
+    const iconVisible = boolValue(icon, "iconVisible");
+    const iconSize = numberValue(icon, "iconSize");
+    const paddingX = numberValue(size, "paddingX");
+    const width = numberValue(size, "width") ?? numberValue(template, "width") ?? (
+      paddingX !== undefined && fontSize !== undefined
+        ? paddingX * 2 + estimateTextWidth(labelText, fontSize) + (iconVisible && iconSize !== undefined ? iconSize + (gap ?? 0) : 0)
+        : undefined
+    );
     return {
       tuple,
       ...(fill ? { fill } : {}),
@@ -534,8 +586,9 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
       ...(strokeWeight !== undefined ? { strokeWeight } : {}),
       ...(textColor ? { textColor } : {}),
       ...(numberValue(state, "opacity") !== undefined ? { opacity: numberValue(state, "opacity") } : {}),
+      ...(width !== undefined ? { width } : {}),
       ...(numberValue(size, "height") !== undefined ? { height: numberValue(size, "height") } : {}),
-      ...(numberValue(size, "paddingX") !== undefined ? { paddingX: numberValue(size, "paddingX") } : {}),
+      ...(paddingX !== undefined ? { paddingX } : {}),
       ...(numberValue(size, "paddingY") !== undefined ? { paddingY: numberValue(size, "paddingY") } : {}),
       ...(numberValue(size, "radius") !== undefined ? { radius: numberValue(size, "radius") } : {}),
       ...(gap !== undefined ? { gap } : {}),
@@ -543,8 +596,8 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
       ...(stringValue(typography, "fontStyle") ? { fontStyle: stringValue(typography, "fontStyle") } : {}),
       ...(fontSize !== undefined ? { fontSize } : {}),
       ...(lineHeight !== undefined ? { lineHeight } : {}),
-      ...(boolValue(icon, "iconVisible") !== undefined ? { iconVisible: boolValue(icon, "iconVisible") } : {}),
-      ...(numberValue(icon, "iconSize") !== undefined ? { iconSize: numberValue(icon, "iconSize") } : {}),
+      ...(iconVisible !== undefined ? { iconVisible } : {}),
+      ...(iconSize !== undefined ? { iconSize } : {}),
       ...(numberValue(icon, "iconRotation") !== undefined ? { iconRotation: numberValue(icon, "iconRotation") } : {}),
       layoutMode: (stringValue(template, "layoutMode") as "HORIZONTAL" | "VERTICAL" | undefined) ?? "HORIZONTAL",
       primaryAxisAlignItems: stringValue(template, "primaryAxisAlignItems") ?? "CENTER",
@@ -566,30 +619,35 @@ const solidPaint = (value: string): Paint | undefined => {
   return color ? { type: "SOLID", color } : undefined;
 };
 
-const applyVisualVariant = (component: ComponentNode, label: TextNode | undefined, icon: RectangleNode | undefined, style: VisualStylePlan["variants"][number]): void => {
+const applyVisualVariant = (component: ComponentNode, label: TextNode | undefined, icon: VectorNode | undefined, style: VisualStylePlan["variants"][number]): void => {
   const frame = component as ComponentNode & Record<string, any>;
   if (style.fill) { const paint = solidPaint(style.fill); if (paint) frame.fills = [paint]; }
   else if (style.fill === undefined && style.stroke) frame.fills = [];
   if (style.stroke) { const paint = solidPaint(style.stroke); if (paint) { frame.strokes = [paint]; frame.strokeWeight = style.strokeWeight ?? 1; } }
   else if (style.stroke === undefined) frame.strokes = [];
   if (style.opacity !== undefined) frame.opacity = style.opacity;
-  if (style.layoutMode) frame.layoutMode = style.layoutMode;
+  frame.layoutMode = (style.layoutMode ?? "HORIZONTAL") as ComponentNode["layoutMode"];
   frame.primaryAxisAlignItems = (style.primaryAxisAlignItems ?? "CENTER") as ComponentNode["primaryAxisAlignItems"];
   frame.counterAxisAlignItems = (style.counterAxisAlignItems ?? "CENTER") as ComponentNode["counterAxisAlignItems"];
+  frame.primaryAxisSizingMode = "FIXED";
+  frame.counterAxisSizingMode = "FIXED";
   if (style.gap !== undefined) frame.itemSpacing = style.gap;
   if (style.paddingX !== undefined) { frame.paddingLeft = style.paddingX; frame.paddingRight = style.paddingX; }
   if (style.paddingY !== undefined) { frame.paddingTop = style.paddingY; frame.paddingBottom = style.paddingY; }
-  if (style.height !== undefined) { frame.counterAxisSizingMode = "FIXED"; frame.resize(frame.width, style.height); }
+  if (style.width !== undefined || style.height !== undefined) frame.resize(style.width ?? frame.width, style.height ?? frame.height);
   if (style.radius !== undefined) frame.cornerRadius = style.radius;
   if (label) {
     if (style.textColor) { const paint = solidPaint(style.textColor); if (paint) label.fills = [paint]; }
     if (style.fontFamily && style.fontStyle) label.fontName = { family: style.fontFamily, style: style.fontStyle };
     if (style.fontSize !== undefined) label.fontSize = style.fontSize;
     if (style.lineHeight !== undefined) label.lineHeight = { unit: "PIXELS", value: style.lineHeight };
+    label.textAlignHorizontal = "CENTER";
   }
   if (icon) {
     if (style.iconSize !== undefined) icon.resize(style.iconSize, style.iconSize);
-    if (style.iconVisible !== undefined) icon.visible = style.iconVisible;
+    if (style.textColor) { const paint = solidPaint(style.textColor); if (paint) icon.strokes = [paint]; }
+    icon.strokeWeight = 1.5;
+    icon.visible = style.iconVisible !== false;
     if (style.iconRotation !== undefined) icon.rotation = style.iconRotation;
   }
 };
@@ -601,7 +659,39 @@ const createDiagnostic = (code: string, message: string, path?: string): Compone
   message,
 });
 
-/** Creates a new native component set only after validating and expanding the complete target matrix. */
+const visualInvariantDiagnostics = (componentSet: ComponentSetNode, styles: VisualStylePlan["variants"]): ComponentDiagnostic[] => {
+  const diagnostics: ComponentDiagnostic[] = [];
+  const variants = componentSet.children.filter((child): child is ComponentNode => child.type === "COMPONENT");
+  const styleByTuple: Record<string, VisualStylePlan["variants"][number]> = {};
+  for (const style of styles) styleByTuple[style.tuple.join("\u0000")] = style;
+  const rectangles: Array<{ x: number; y: number; width: number; height: number }> = [];
+  for (const variant of variants) {
+    if (!Number.isFinite(variant.x) || !Number.isFinite(variant.y) || variant.width <= 0 || variant.height <= 0) {
+      diagnostics.push(createDiagnostic("VISUAL_BOUNDS_INVALID", `Variant ${variant.name} has invalid bounds.`));
+      continue;
+    }
+    rectangles.push({ x: variant.x, y: variant.y, width: variant.width, height: variant.height });
+    const variantProperties = variant.variantProperties ?? {};
+    const tuple = Object.keys(variantProperties).sort((a, b) => a.localeCompare(b)).map((key) => variantProperties[key]);
+    const style = styleByTuple[tuple.join("\u0000")];
+    if (style) {
+      if (style.height !== undefined && variant.height !== style.height) diagnostics.push(createDiagnostic("VISUAL_HEIGHT_MISMATCH", `Variant ${variant.name} height ${variant.height} does not match ${style.height}.`));
+      if (style.width !== undefined && variant.width !== style.width) diagnostics.push(createDiagnostic("VISUAL_WIDTH_MISMATCH", `Variant ${variant.name} width ${variant.width} does not match ${style.width}.`));
+      if (style.layoutMode && variant.layoutMode !== style.layoutMode) diagnostics.push(createDiagnostic("VISUAL_LAYOUT_MISMATCH", `Variant ${variant.name} is not ${style.layoutMode} auto layout.`));
+      if (style.gap !== undefined && variant.itemSpacing !== style.gap) diagnostics.push(createDiagnostic("VISUAL_GAP_MISMATCH", `Variant ${variant.name} gap ${variant.itemSpacing} does not match ${style.gap}.`));
+    }
+  }
+  for (let index = 0; index < rectangles.length; index += 1) {
+    for (let other = index + 1; other < rectangles.length; other += 1) {
+      const a = rectangles[index];
+      const b = rectangles[other];
+      if (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y) diagnostics.push(createDiagnostic("VISUAL_VARIANT_OVERLAP", "Component-set variants overlap after creation."));
+    }
+  }
+  if (componentSet.width <= 0 || componentSet.height <= 0 || (variants.length > 1 && componentSet.width <= 100 && componentSet.height <= 100)) diagnostics.push(createDiagnostic("VISUAL_SET_BOUNDS_INVALID", "Component-set bounds are not meaningful for its variant grid."));
+  return diagnostics;
+};
+
 export const createComponentSet = async (target: TargetSchema, options?: {
   dryRun?: boolean;
   parentId?: string;
@@ -646,6 +736,10 @@ export const createComponentSet = async (target: TargetSchema, options?: {
       parent = parentNode as BaseNode & ChildrenMixin;
     }
 
+    const styleByTuple: Record<string, VisualStylePlan["variants"][number]> = {};
+    for (const style of visualPlan?.variants ?? []) styleByTuple[style.tuple.join("\u0000")] = style;
+    const gridByTuple: Record<string, VariantGridPlacement> = {};
+    for (const placement of planVariantGrid(visualPlan?.variants ?? [], { originX: 0, originY: 0 })) gridByTuple[placement.tuple.join("\u0000")] = placement;
     const components: ComponentNode[] = [];
     for (const tuple of validation.normalized.variants) {
       const variantProperties: Record<string, string> = {};
@@ -654,8 +748,6 @@ export const createComponentSet = async (target: TargetSchema, options?: {
       const component = figma.createComponent();
       created.push(component);
       component.name = variantName;
-      if (options?.x !== undefined) component.x = options.x;
-      if (options?.y !== undefined) component.y = options.y;
       parent.appendChild(component);
       components.push(component);
 
@@ -669,17 +761,21 @@ export const createComponentSet = async (target: TargetSchema, options?: {
         component.appendChild(label);
       }
       const iconProperty = validation.normalized.properties.find((property) => property.name === "Show Icon" && property.type === "BOOLEAN");
-      let icon: RectangleNode | undefined;
+      let icon: VectorNode | undefined;
       if (iconProperty) {
-        icon = figma.createRectangle();
+        icon = figma.createVector();
         created.push(icon);
         icon.name = "Icon";
+        const geometry = arrowIconGeometry(18);
+        icon.vectorPaths = [{ windingRule: "NONZERO", data: geometry.path }];
+        icon.resize(geometry.width, geometry.height);
         icon.visible = iconProperty.defaultValue !== false;
-        icon.resize(16, 16);
         component.appendChild(icon);
       }
-      const style = visualPlan?.variants.find((item) => item.tuple.join("\u0000") === tuple.join("\u0000"));
+      const style = styleByTuple[tuple.join("\u0000")];
       if (style) applyVisualVariant(component, label, icon, style);
+      const placement = gridByTuple[tuple.join("\u0000")];
+      if (placement) { component.x = placement.x; component.y = placement.y; }
       const layout = (target.layoutTemplate ?? {}) as Record<string, unknown>;
       if (!style && typeof layout.layoutMode === "string") component.layoutMode = layout.layoutMode as BaseFrameMixin["layoutMode"];
       if (!style && typeof layout.itemSpacing === "number") component.itemSpacing = layout.itemSpacing;
@@ -687,6 +783,13 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     if (components.length < 1) throw Object.assign(new Error("Target schema produced no variants"), { mutationError: { code: "INVALID_SCHEMA", message: "Target schema produced no variants" } });
     componentSet = figma.combineAsVariants(components, parent as BaseNode & ChildrenMixin);
     if (validation.normalized.name) componentSet.name = validation.normalized.name;
+    if (options?.x !== undefined) componentSet.x = options.x;
+    if (options?.y !== undefined) componentSet.y = options.y;
+    for (const variant of componentSet.children.filter((child): child is ComponentNode => child.type === "COMPONENT")) {
+      const tuple = validation.normalized.dimensions.map((dimension) => parseVariantName(variant.name)[dimension.name] ?? "");
+      const placement = gridByTuple[tuple.join("\u0000")];
+      if (placement) { variant.x = placement.x; variant.y = placement.y; }
+    }
     if (options?.key && "setSharedPluginData" in componentSet) componentSet.setSharedPluginData("codex", "key", options.key);
 
     const definitions = (componentSet as ComponentSetNode & ComponentPropertiesMixin).componentPropertyDefinitions ?? {};
@@ -706,25 +809,26 @@ export const createComponentSet = async (target: TargetSchema, options?: {
         if (property.type === "TEXT" && property.name === "Label") {
           const text = children.find((child): child is TextNode => child.type === "TEXT" && child.name === "Label");
           if (text) {
-            const ref = Object.keys(owner.componentPropertyDefinitions ?? {}).find((name) => name === property.name);
+            const ref = Object.keys(owner.componentPropertyDefinitions ?? {}).find((name) => name === property.name || name.split("#", 1)[0] === property.name);
             if (ref) (text as TextNode & { componentPropertyReferences?: Record<string, string> }).componentPropertyReferences = { characters: ref };
-            const summary = propertySummary.find((item) => item.name === property.name); if (summary) summary.bindings += text ? 1 : 0;
+            const summary = propertySummary.find((item) => item.name === property.name); if (summary) summary.bindings += ref ? 1 : 0;
           }
         }
         if (property.type === "BOOLEAN" && property.name === "Show Icon") {
           const icon = children.find((child) => child.name === "Icon");
           if (icon) {
-            const ref = Object.keys(owner.componentPropertyDefinitions ?? {}).find((name) => name === property.name);
+            const ref = Object.keys(owner.componentPropertyDefinitions ?? {}).find((name) => name === property.name || name.split("#", 1)[0] === property.name);
             if (ref) (icon as SceneNode & { componentPropertyReferences?: Record<string, string> }).componentPropertyReferences = { visible: ref };
-            const summary = propertySummary.find((item) => item.name === property.name); if (summary) summary.bindings += icon ? 1 : 0;
+            const summary = propertySummary.find((item) => item.name === property.name); if (summary) summary.bindings += ref ? 1 : 0;
           }
         }
       }
     }
     const verification = await verifyComponentSet(componentSet.id);
+    const visualDiagnostics = visualInvariantDiagnostics(componentSet, visualPlan?.variants ?? []);
     const expected = validation.expectedVariantCount;
-    const verified = verification.healthy && verification.normalized.variants.length === expected;
-    if (!verified) throw Object.assign(new Error("Postflight verification failed"), { mutationError: { code: "VERIFICATION_FAILED", message: "Created component set failed postflight verification", details: verification } });
+    const verified = verification.healthy && verification.normalized.variants.length === expected && visualDiagnostics.length === 0;
+    if (!verified) throw Object.assign(new Error("Postflight visual verification failed"), { mutationError: { code: "VERIFICATION_FAILED", message: "Created component set failed postflight visual verification", details: { verification, visualDiagnostics } } });
     return { ...base, componentSetId: componentSet.id, variantCount: verification.normalized.variants.length, propertySummary, verification, valid: true };
   } catch (error) {
     const removedNodeIds: string[] = [];

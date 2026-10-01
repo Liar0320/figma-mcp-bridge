@@ -23,12 +23,14 @@ export const componentError = (
   code: ComponentErrorCode,
   message: string,
   details?: unknown,
-): ComponentError => ({
-  code,
-  message,
-  details,
-  retryable: ["PAGE_LOAD_FAILED", "TRAVERSAL_FAILED"].includes(code),
-});
+): ComponentError & Error => {
+  const error = new Error(message) as ComponentError & Error;
+  error.name = code;
+  error.code = code;
+  error.details = details;
+  error.retryable = ["PAGE_LOAD_FAILED", "TRAVERSAL_FAILED"].includes(code);
+  return error;
+};
 
 export function serializeComponentError(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && "message" in error) {

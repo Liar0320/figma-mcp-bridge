@@ -37,6 +37,7 @@ const replacements = [
       ['"./tokens"', '"./tokens.js"'],
     ],
   ],
+  [new URL("../dist-test/src/main/write.js", import.meta.url), [['"./componentMigration"', '"./componentMigration.js"']]],
 ];
 
 for (const [filePath, fileReplacements] of replacements) {

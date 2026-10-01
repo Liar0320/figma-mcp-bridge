@@ -20,16 +20,10 @@
     "src/main/tokenApply.ts",
     "src/main/tokenExport.ts",
     "src/main/tokens.ts",
-<<<<<<< HEAD
     "src/main/components.ts",
     "src/main/componentTools.ts",
     "src/main/componentMigration.ts",
     "src/main/componentReliability.ts",
     "src/main/operationJournal.ts"
-=======
-    "src/main/components.ts"
-    ,"src/main/componentReliability.ts"
-    ,"src/main/operationJournal.ts"
->>>>>>> 58e1e4c (feat(test): add component reliability acceptance layer)
   ]
 }

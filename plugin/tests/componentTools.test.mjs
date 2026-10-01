@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeComponentSetNode, validateComponentPlan, createComponentSet } from "../dist-test/src/main/componentTools.js";
+import { normalizeComponentSetNode, validateComponentPlan, createComponentSet, arrowIconGeometry, planVariantGrid } from "../dist-test/src/main/componentTools.js";
 
 const buttonTarget = {
   name: "Button",
@@ -49,6 +49,20 @@ assert.equal(dryRunResult.valid, true);
 assert.equal(dryRunResult.variantCount, 0);
 assert.equal(dryRunResult.visualPlan?.variants.length, 108);
 assert.equal(textDisabledLargeUp?.iconSize, 18);
+const grid = planVariantGrid([
+  { tuple: ["A"], width: 32, height: 20 },
+  { tuple: ["B"], width: 40, height: 22 },
+  { tuple: ["C"], width: 36, height: 24 },
+], { columns: 2, gapX: 8, gapY: 4 });
+assert.deepEqual(grid.map(({ x, y, row, column }) => ({ x, y, row, column })), [
+  { x: 0, y: 0, row: 0, column: 0 },
+  { x: 44, y: 0, row: 0, column: 1 },
+  { x: 0, y: 26, row: 1, column: 0 },
+]);
+const arrow = arrowIconGeometry(18);
+assert.equal(arrow.width, 18);
+assert.match(arrow.path, /^M 3 9 L 14 9/);
+assert.notEqual(arrow.path, "");
 
 const target = {
   dimensions: [

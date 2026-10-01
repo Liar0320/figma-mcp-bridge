@@ -200,6 +200,37 @@ const localComponentsPaginationFields = {
     .optional()
     .describe("Best-effort scan time budget in milliseconds before returning partial results and warnings."),
 };
+const componentDimension = z.object({
+  name: z.string().min(1),
+  values: z.array(z.string().min(1)).min(1),
+});
+const componentTargetProperty = z.object({
+  name: z.string().min(1),
+  type: componentPropertyType,
+  defaultValue: componentPropertyValue.optional(),
+  variantOptions: z.array(z.string().min(1)).optional(),
+});
+const componentTargetSchema = z.object({
+  name: z.string().min(1).optional(),
+  dimensions: z.array(componentDimension).optional(),
+  properties: z.array(componentTargetProperty).optional(),
+  requiredBindings: z.array(z.object({
+    property: z.string().min(1),
+    nodeName: z.string().min(1).optional(),
+    type: componentPropertyType.optional(),
+  })).optional(),
+  variants: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
+  visualTemplate: z.record(z.string(), z.unknown()).optional(),
+  layoutTemplate: z.record(z.string(), z.unknown()).optional(),
+});
+const createComponentSetOptions = {
+  target: componentTargetSchema.describe("Declarative component set schema"),
+  dryRun: z.boolean().optional().default(true).describe("Preview only by default; false is the only mutating path"),
+  parentId: figmaNodeId.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  key: z.string().min(1).optional(),
+};
 const componentReliabilityFields = {
   chunkSize: z.number().int().min(1).max(500).optional(),
   baseline: z.string().min(1).optional(),
@@ -662,6 +693,10 @@ const rpcToArgs: Record<
   get_metadata: (_nodeIds, params) => ({ ...params }),
   get_local_components: (_nodeIds, params) => ({ ...params }),
   get_components: (_nodeIds, params) => ({ ...params }),
+  get_component_matrix: (_nodeIds, params) => ({ ...params }),
+  get_operation_journal: (_nodeIds, params) => ({ ...params }),
+  rollback_operation: (_nodeIds, params) => ({ ...params }),
+  get_component_screenshot_report: (nodeIds, params) => ({ nodeIds, ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_design_tokens: (_nodeIds, params) => ({ ...params }),
   get_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),

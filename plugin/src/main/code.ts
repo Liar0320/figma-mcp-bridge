@@ -80,7 +80,7 @@ type RequestType =
   | "merge_component_sets"
   | "split_component_set"
   | "migrate_instances"
-  | "reconcile_component_set";
+  | "reconcile_component_set"
   | "get_operation_journal"
   | "rollback_operation"
   | "get_component_matrix"
@@ -137,6 +137,7 @@ type ServerRequest = {
     journalId?: string;
     baseline?: string;
   };
+};
 
 type PluginResponse = {
   type: RequestType;
