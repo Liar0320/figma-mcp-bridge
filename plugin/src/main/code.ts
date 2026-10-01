@@ -52,6 +52,7 @@ type RequestType =
   | "manage_component_properties"
   | "set_component_properties"
   | "set_exposed_instance"
+  | "bind_component_properties"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -550,6 +551,7 @@ const handleRequest = async (
       case "manage_component_properties":
       case "set_component_properties":
       case "set_exposed_instance":
+      case "bind_component_properties":
       case "create_text":
       case "create_rectangle":
       case "append_children":

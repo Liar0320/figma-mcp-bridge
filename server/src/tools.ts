@@ -68,6 +68,7 @@ type WriteToolName = keyof Pick<
   | "manage_component_properties"
   | "set_component_properties"
   | "set_exposed_instance"
+  | "bind_component_properties"
   | "create_text"
   | "create_rectangle"
   | "append_children"
@@ -429,6 +430,11 @@ export function registerTools(server: McpServer, node: Node): void {
     "set_exposed_instance",
     "Set whether an eligible nested instance is exposed to its containing component/component set. Figma only allows exposing nested instances that satisfy native component-property constraints.",
     (args, fileKey) => node.sendWithParams("set_exposed_instance", undefined, args, fileKey)
+  );
+  registerWriteTool(
+    "bind_component_properties",
+    "Create or update component property definitions and optionally apply values to an instance using native Figma APIs.",
+    (args, fileKey) => node.sendWithParams("bind_component_properties", undefined, args, fileKey)
   );
   registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
     node.sendWithParams("create_text", undefined, args, fileKey)

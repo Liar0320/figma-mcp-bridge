@@ -427,6 +427,26 @@ function validateWriteToolParams(
         fail("INVALID_INPUT", "isExposed must be a boolean");
       }
       return;
+    case "bind_component_properties":
+      getFigmaNodeId(params?.componentId, "componentId");
+      if (params?.instanceId !== undefined) getFigmaNodeId(params.instanceId, "instanceId");
+      if (!Array.isArray(params?.bindings) || params.bindings.length === 0) fail("INVALID_INPUT", "bindings must be a non-empty array");
+      for (const [index, binding] of params.bindings.entries()) {
+        if (!isObject(binding)) fail("INVALID_INPUT", `bindings[${index}] must be an object`);
+        getString(binding.propertyName, `bindings[${index}].propertyName`);
+        if (binding.propertyType !== undefined) validateEnum(binding.propertyType, `bindings[${index}].propertyType`, ["BOOLEAN", "TEXT", "INSTANCE_SWAP", "VARIANT"]);
+        if (binding.defaultValue !== undefined && typeof binding.defaultValue !== "string" && typeof binding.defaultValue !== "boolean") fail("INVALID_INPUT", `bindings[${index}].defaultValue must be a string or boolean`);
+        if (binding.value !== undefined && typeof binding.value !== "string" && typeof binding.value !== "boolean") fail("INVALID_INPUT", `bindings[${index}].value must be a string or boolean`);
+        if (binding.preferredValues !== undefined) {
+          if (!Array.isArray(binding.preferredValues)) fail("INVALID_INPUT", `bindings[${index}].preferredValues must be an array`);
+          for (const preferred of binding.preferredValues) {
+            if (!isObject(preferred)) fail("INVALID_INPUT", `bindings[${index}].preferredValues entries must be objects`);
+            validateEnum(preferred.type, `bindings[${index}].preferredValues.type`, ["COMPONENT", "COMPONENT_SET"]);
+            getString(preferred.key, `bindings[${index}].preferredValues.key`);
+          }
+        }
+      }
+      return;
     case "create_text":
       if (params) validateCreateNodeBase(params);
       if (params?.characters !== undefined && typeof params.characters !== "string") {
@@ -1205,6 +1225,43 @@ async function setExposedInstance(params: RequestParams): Promise<MutationResult
   };
 }
 
+/** Creates/updates component property definitions and optionally applies values to an instance. */
+async function bindComponentProperties(params: RequestParams): Promise<MutationResult & { bindings: unknown[]; appliedValues?: Record<string, ComponentPropertyPrimitive> }> {
+  const owner = await getComponentPropertyOwner(params?.componentId);
+  if (owner.type === "COMPONENT" && owner.parent?.type === "COMPONENT_SET") {
+    fail("FIGMA_API_LIMITATION", "Component property definitions must be bound on a component set or non-variant component");
+  }
+  const bindings = params?.bindings as Array<Record<string, unknown>>;
+  const results: unknown[] = [];
+  const applied: Record<string, ComponentPropertyPrimitive> = {};
+  const definitions = owner.componentPropertyDefinitions as Record<string, { type: string; defaultValue?: ComponentPropertyPrimitive }>;
+  for (const binding of bindings) {
+    const propertyName = getString(binding.propertyName, "propertyName");
+    const existing = definitions[propertyName];
+    let returnedName = propertyName;
+    if (!existing) {
+      const propertyType = getString(binding.propertyType, "propertyType") as ComponentPropertyType;
+      const defaultValue = binding.defaultValue as ComponentPropertyPrimitive;
+      if (defaultValue === undefined) fail("INVALID_INPUT", `defaultValue is required when adding ${propertyName}`);
+      returnedName = owner.addComponentProperty(propertyName, propertyType, defaultValue, binding.preferredValues === undefined ? undefined : { preferredValues: binding.preferredValues as InstanceSwapPreferredValue[] });
+      results.push({ propertyName, returnedName, action: "add" });
+    } else {
+      const next: { defaultValue?: ComponentPropertyPrimitive; preferredValues?: InstanceSwapPreferredValue[] } = {};
+      if (binding.defaultValue !== undefined) next.defaultValue = binding.defaultValue as ComponentPropertyPrimitive;
+      if (binding.preferredValues !== undefined) next.preferredValues = binding.preferredValues as InstanceSwapPreferredValue[];
+      if (Object.keys(next).length > 0) owner.editComponentProperty(propertyName, next);
+      results.push({ propertyName, returnedName, action: Object.keys(next).length > 0 ? "edit" : "unchanged" });
+    }
+    if (binding.value !== undefined) applied[propertyName] = binding.value as ComponentPropertyPrimitive;
+  }
+  if (params?.instanceId !== undefined) {
+    const instance = await getNodeById(getString(params.instanceId, "instanceId"));
+    if (instance.type !== "INSTANCE") fail("INVALID_INSTANCE", "instanceId must reference an INSTANCE node");
+    if (Object.keys(applied).length > 0) (instance as InstanceNode).setProperties(applied);
+  }
+  return { ...toMutationResult(owner), bindings: results, ...(Object.keys(applied).length > 0 ? { appliedValues: applied } : {}) };
+}
+
 /** Creates a text node on the current page and applies content and style inputs. */
 async function createText(params: RequestParams): Promise<MutationResult> {
   const parent = await getParentNode(getOptionalString(params?.parentId));
@@ -1801,6 +1858,8 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return setComponentProperties(params);
     case "set_exposed_instance":
       return setExposedInstance(params);
+    case "bind_component_properties":
+      return bindComponentProperties(params);
     case "create_text":
       return createText(params);
     case "create_rectangle":

@@ -1629,6 +1629,27 @@ async function testSetComponentPropertiesOnInstance() {
   assert.equal(result.node.componentProperties.Enabled.value, true);
 }
 
+/** Verifies high-level component property binding adds definitions and applies values. */
+async function testBindComponentProperties() {
+  globalThis.figma = createMockFigma();
+  const component = await handleWriteRequest("create_component", undefined, { name: "Button" });
+  const instance = await handleWriteRequest("create_instance", undefined, { componentId: component.nodeId });
+  const result = await handleWriteRequest("bind_component_properties", undefined, {
+    componentId: component.nodeId,
+    instanceId: instance.nodeId,
+    bindings: [
+      { propertyName: "Label", propertyType: "TEXT", defaultValue: "Submit", value: "Buy" },
+      { propertyName: "Enabled", propertyType: "BOOLEAN", defaultValue: true, value: false },
+    ],
+  });
+  assert.equal(result.bindings.length, 2);
+  assert.deepEqual(result.appliedValues, { Label: "Buy", Enabled: false });
+  const labelName = result.bindings[0].returnedName;
+  assert.equal(result.node.componentPropertyDefinitions[labelName].defaultValue, "Submit");
+  const instanceNode = await globalThis.figma.getNodeByIdAsync(instance.nodeId);
+  assert.equal(instanceNode.componentProperties.Label.value, "Buy");
+}
+
 /** Verifies nested instances can be marked as exposed. */
 async function testSetExposedInstance() {
   globalThis.figma = createMockFigma();
@@ -1693,6 +1714,7 @@ async function runTests() {
     ["testManageComponentPropertiesAddEditDelete", testManageComponentPropertiesAddEditDelete],
     ["testSetComponentPropertiesOnInstance", testSetComponentPropertiesOnInstance],
     ["testSetExposedInstance", testSetExposedInstance],
+    ["testBindComponentProperties", testBindComponentProperties],
     ["testSetVariantPropertiesRejectsStandaloneComponent", testSetVariantPropertiesRejectsStandaloneComponent],
     ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],

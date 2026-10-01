@@ -115,6 +115,7 @@ export const batchOperationType = z.enum([
   "manage_component_properties",
   "set_component_properties",
   "set_exposed_instance",
+  "bind_component_properties",
   "create_text",
   "create_rectangle",
   "append_children",
@@ -483,6 +484,17 @@ export const toolInputSchemas = {
     instanceId: figmaNodeId.describe("A nested INSTANCE node inside a component/component set"),
     isExposed: z.boolean(),
   }),
+  bind_component_properties: withFileKey({
+    componentId: figmaNodeId.describe("A COMPONENT or COMPONENT_SET that owns the definitions"),
+    instanceId: figmaNodeId.optional().describe("Optional INSTANCE receiving values after definitions are bound"),
+    bindings: z.array(z.object({
+      propertyName: z.string().min(1),
+      propertyType: componentPropertyType.optional(),
+      defaultValue: componentPropertyValue.optional(),
+      preferredValues: z.array(preferredInstanceSwapValue).optional(),
+      value: componentPropertyValue.optional(),
+    })).min(1).max(50),
+  }),
   create_text: createNodeBase.extend({
     fileKey: fileKeyField,
     characters: z.string().optional(),
@@ -622,6 +634,7 @@ const rpcToArgs: Record<
   manage_component_properties: (_nodeIds, params) => ({ ...params }),
   set_component_properties: (_nodeIds, params) => ({ ...params }),
   set_exposed_instance: (_nodeIds, params) => ({ ...params }),
+  bind_component_properties: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_rectangle: (_nodeIds, params) => ({ ...params }),
   append_children: (_nodeIds, params) => ({ ...params }),
