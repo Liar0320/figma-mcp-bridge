@@ -15,6 +15,7 @@ type NormalizedProperty = {
   type: string;
   defaultValue?: string | boolean;
   variantOptions?: string[];
+  preferredValues?: Array<{ type: "COMPONENT" | "COMPONENT_SET"; key: string }>;
 };
 type NormalizedVariant = {
   id: string;
@@ -41,6 +42,7 @@ export type TargetSchema = {
   properties?: Array<{ name: string; type: string; defaultValue?: string | boolean; variantOptions?: string[] }>;
   requiredBindings?: Array<{ property: string; nodeName?: string; type?: string }>;
   variants?: Array<Record<string, string>>;
+  exclusions?: Array<Record<string, string>>;
   visualTemplate?: Record<string, unknown>;
   layoutTemplate?: Record<string, unknown>;
 };
@@ -122,6 +124,14 @@ const normalizeProperties = (
       item.defaultValue = definition.defaultValue;
     }
     if (Array.isArray(definition.variantOptions)) item.variantOptions = stableStrings(definition.variantOptions);
+    if (Array.isArray(definition.preferredValues)) {
+      item.preferredValues = definition.preferredValues
+        .filter((value): value is { type: "COMPONENT" | "COMPONENT_SET"; key: string } =>
+          asRecord(value).type === "COMPONENT" || asRecord(value).type === "COMPONENT_SET"
+        )
+        .filter((value) => typeof value.key === "string" && value.key.length > 0)
+        .map((value) => ({ type: value.type, key: value.key }));
+    }
     properties.push(item);
   }
   properties.sort((a, b) => a.name.localeCompare(b.name));
@@ -315,12 +325,23 @@ export const validateTargetSchema = (target: TargetSchema): {
   }
   const properties = normalizeProperties(targetProperties, diagnostics, "");
   const propertyNames = new Set(properties.map((property) => property.name));
+  for (const property of properties) {
+    if (property.type === "INSTANCE_SWAP" && !property.preferredValues?.length) {
+      diagnostics.push(diagnostic("INSTANCE_SWAP_PREFERRED_VALUES_REQUIRED", `properties.${property.name}.preferredValues`, `INSTANCE_SWAP property ${property.name} requires preferredValues.`, "Declare at least one preferred component or component set."));
+    }
+  }
   for (const [index, binding] of (target?.requiredBindings ?? []).entries()) {
     if (!binding || typeof binding.property !== "string" || !propertyNames.has(binding.property)) {
       diagnostics.push(diagnostic("UNKNOWN_REQUIRED_BINDING", `requiredBindings.${index}`, `Required binding references unknown property ${String(binding?.property ?? "")}.`, "Declare the property before requiring its binding."));
     }
+    else {
+      const property = properties.find((item) => item.name === binding.property)!;
+      if (binding.type && binding.type !== property.type) diagnostics.push(diagnostic("REQUIRED_BINDING_TYPE_MISMATCH", `requiredBindings.${index}.type`, `Required binding ${binding.property} expects ${property.type}, received ${binding.type}.`, "Use the declared property type."));
+      if (property.type === "INSTANCE_SWAP" && !property.preferredValues?.length) diagnostics.push(diagnostic("INSTANCE_SWAP_PREFERRED_VALUES_REQUIRED", `properties.${binding.property}.preferredValues`, `INSTANCE_SWAP property ${binding.property} requires preferredValues.`, "Declare at least one preferred component or component set."));
+    }
   }
   const explicitTuples = Array.isArray(target?.variants) ? target.variants : [];
+  const exclusions = Array.isArray(target?.exclusions) ? target.exclusions : [];
   const tuples: string[][] = explicitTuples.length > 0
     ? explicitTuples.map((tuple) => dimensions.map((dimension) => String(tuple?.[dimension.name] ?? "")))
     : (() => {
@@ -331,6 +352,7 @@ export const validateTargetSchema = (target: TargetSchema): {
   const tupleKeys = new Set<string>();
   for (const [index, tuple] of tuples.entries()) {
     const key = dimensions.map((dimension, dimensionIndex) => `${dimension.name}=${tuple[dimensionIndex] ?? ""}`).join(",");
+    if (exclusions.some((excluded) => dimensions.every((dimension) => excluded[dimension.name] === tuple[dimensions.indexOf(dimension)]))) continue;
     if (tuple.some((value) => !value)) diagnostics.push(diagnostic("INVALID_VARIANT_TUPLE", `variants.${index}`, "Variant tuple is missing a declared dimension value.", "Provide one allowed value for every dimension."));
     for (let dimensionIndex = 0; dimensionIndex < dimensions.length; dimensionIndex += 1) {
       if (!dimensions[dimensionIndex].values.includes(tuple[dimensionIndex])) diagnostics.push(diagnostic("UNKNOWN_VARIANT_VALUE", `variants.${index}.${dimensions[dimensionIndex].name}`, `Value ${tuple[dimensionIndex]} is not declared for ${dimensions[dimensionIndex].name}.`, "Use a value from the dimension declaration."));
@@ -341,9 +363,9 @@ export const validateTargetSchema = (target: TargetSchema): {
   diagnostics.sort(diagnosticSort);
   return {
     valid: diagnostics.length === 0,
-    normalized: { name: typeof target?.name === "string" ? target.name.trim() : undefined, dimensions, properties, variants: tuples.sort((a, b) => a.join("\u0000").localeCompare(b.join("\u0000"))) },
+    normalized: { name: typeof target?.name === "string" ? target.name.trim() : undefined, dimensions, properties, variants: tuples.filter((tuple) => !exclusions.some((excluded) => dimensions.every((dimension, index) => excluded[dimension.name] === tuple[index]))).sort((a, b) => a.join("\u0000").localeCompare(b.join("\u0000"))) },
     diagnostics,
-    expectedVariantCount: tuples.length,
+    expectedVariantCount: tuples.filter((tuple) => !exclusions.some((excluded) => dimensions.every((dimension, index) => excluded[dimension.name] === tuple[index]))).length,
   };
 };
 
@@ -800,7 +822,14 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     for (const property of validation.normalized.properties.filter((item) => item.type !== "VARIANT")) {
       if (definitions[property.name]) throw Object.assign(new Error(`Property conflicts with native variant dimension: ${property.name}`), { mutationError: { code: "PROPERTY_CONFLICT", message: `Property conflicts with native variant dimension: ${property.name}` } });
       const defaultValue = property.defaultValue ?? (property.type === "BOOLEAN" ? false : "");
-      owner.addComponentProperty(property.name, property.type as ComponentPropertyType, defaultValue);
+      owner.addComponentProperty(
+        property.name,
+        property.type as ComponentPropertyType,
+        defaultValue,
+        property.type === "INSTANCE_SWAP" && property.preferredValues?.length
+          ? { preferredValues: property.preferredValues as InstanceSwapPreferredValue[] }
+          : undefined
+      );
     }
 
     for (const variant of componentSet.children.filter((child): child is ComponentNode => child.type === "COMPONENT")) {
@@ -826,9 +855,26 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     }
     const verification = await verifyComponentSet(componentSet.id);
     const visualDiagnostics = visualInvariantDiagnostics(componentSet, visualPlan?.variants ?? []);
+    const bindingDiagnostics: ComponentDiagnostic[] = [];
+    const definitionsAfter = owner.componentPropertyDefinitions ?? {};
+    for (const required of target.requiredBindings ?? []) {
+      const definitionName = Object.keys(definitionsAfter).find((name) => name === required.property || name.split("#", 1)[0] === required.property);
+      if (!definitionName) {
+        bindingDiagnostics.push(createDiagnostic("REQUIRED_BINDING_MISSING", `Required binding ${required.property} was not persisted.`));
+        continue;
+      }
+      if (required.type && definitionsAfter[definitionName].type !== required.type) bindingDiagnostics.push(createDiagnostic("REQUIRED_BINDING_TYPE_MISMATCH", `Required binding ${required.property} persisted as ${definitionsAfter[definitionName].type}.`));
+      if (required.nodeName) {
+        const matched = componentSet.children.some((variant) => variant.type === "COMPONENT" && variant.findAll((node) => node.name === required.nodeName).some((node) => {
+          const refs = (node as SceneNode & { componentPropertyReferences?: Record<string, string> }).componentPropertyReferences ?? {};
+          return Object.values(refs).includes(definitionName);
+        }));
+        if (!matched) bindingDiagnostics.push(createDiagnostic("REQUIRED_BINDING_NODE_MISSING", `Required binding ${required.property} is not attached to node ${required.nodeName}.`));
+      }
+    }
     const expected = validation.expectedVariantCount;
-    const verified = verification.healthy && verification.normalized.variants.length === expected && visualDiagnostics.length === 0;
-    if (!verified) throw Object.assign(new Error("Postflight visual verification failed"), { mutationError: { code: "VERIFICATION_FAILED", message: "Created component set failed postflight visual verification", details: { verification, visualDiagnostics } } });
+    const verified = verification.healthy && verification.normalized.variants.length === expected && visualDiagnostics.length === 0 && bindingDiagnostics.length === 0;
+    if (!verified) throw Object.assign(new Error("Created component set failed postflight verification"), { mutationError: { code: "VERIFICATION_FAILED", message: "Created component set failed postflight verification", details: { verification, visualDiagnostics, bindingDiagnostics } } });
     return { ...base, componentSetId: componentSet.id, variantCount: verification.normalized.variants.length, propertySummary, verification, valid: true };
   } catch (error) {
     const removedNodeIds: string[] = [];

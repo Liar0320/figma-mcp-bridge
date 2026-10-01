@@ -83,6 +83,28 @@ const duplicatePlan = validateComponentPlan({
 assert.equal(duplicatePlan.valid, false);
 assert.equal(duplicatePlan.diagnostics[0].code, "DUPLICATE_VARIANT_TUPLE");
 
+const excludedPlan = validateComponentPlan({
+  dimensions: [{ name: "State", values: ["Default", "Hover"] }],
+  exclusions: [{ State: "Hover" }],
+});
+assert.equal(excludedPlan.valid, true);
+assert.equal(excludedPlan.expectedVariantCount, 1);
+assert.deepEqual(excludedPlan.normalized.variants, [["Default"]]);
+
+const invalidSwapPlan = validateComponentPlan({
+  dimensions: [{ name: "State", values: ["Default"] }],
+  properties: [{ name: "Icon", type: "INSTANCE_SWAP", defaultValue: "" }],
+});
+assert.equal(invalidSwapPlan.valid, false);
+assert.ok(invalidSwapPlan.diagnostics.some((item) => item.code === "INSTANCE_SWAP_PREFERRED_VALUES_REQUIRED"));
+
+const validSwapPlan = validateComponentPlan({
+  dimensions: [{ name: "State", values: ["Default"] }],
+  properties: [{ name: "Icon", type: "INSTANCE_SWAP", defaultValue: "", preferredValues: [{ type: "COMPONENT", key: "icon-key" }] }],
+  requiredBindings: [{ property: "Icon", type: "INSTANCE_SWAP" }],
+});
+assert.equal(validSwapPlan.valid, true);
+
 const set = {
   id: "20:1",
   type: "COMPONENT_SET",

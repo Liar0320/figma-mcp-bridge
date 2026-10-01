@@ -209,6 +209,7 @@ const componentTargetProperty = z.object({
   type: componentPropertyType,
   defaultValue: componentPropertyValue.optional(),
   variantOptions: z.array(z.string().min(1)).optional(),
+  preferredValues: z.array(preferredInstanceSwapValue).optional(),
 });
 const componentTargetSchema = z.object({
   name: z.string().min(1).optional(),
@@ -219,6 +220,7 @@ const componentTargetSchema = z.object({
     nodeName: z.string().min(1).optional(),
     type: componentPropertyType.optional(),
   })).optional(),
+  exclusions: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
   variants: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
   visualTemplate: z.record(z.string(), z.unknown()).optional(),
   layoutTemplate: z.record(z.string(), z.unknown()).optional(),

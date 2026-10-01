@@ -94,9 +94,9 @@ function toMutationError(error: unknown): MutationError {
     return (error as { mutationError: MutationError }).mutationError;
   }
   if (error instanceof Error) {
-    return { code: "INTERNAL_ERROR", message: error.message };
+    return { code: "PLUGIN_ERROR", message: error.message, details: { name: error.name } };
   }
-  return { code: "INTERNAL_ERROR", message: String(error) };
+  return { code: "PLUGIN_ERROR", message: String(error), details: { valueType: typeof error } };
 }
 
 /** Reads a required string field from untyped RPC params. */
@@ -307,6 +307,9 @@ function validateComponentPropertyOperations(value: unknown): void {
       if (typeof operation.defaultValue !== "string" && typeof operation.defaultValue !== "boolean") {
         fail("INVALID_INPUT", `operations[${index}].defaultValue must be a string or boolean`);
       }
+      if (operation.propertyType === "INSTANCE_SWAP" && (!Array.isArray(operation.preferredValues) || operation.preferredValues.length === 0)) {
+        fail("INVALID_INPUT", `operations[${index}].preferredValues must contain at least one preferred value for INSTANCE_SWAP`);
+      }
     }
     if (operation.action === "edit") {
       if (operation.newName !== undefined) {
@@ -337,6 +340,9 @@ function validateComponentPropertyOperations(value: unknown): void {
           `operations[${index}].preferredValues[${valueIndex}].key`
         );
       }
+    }
+    if (operation.action === "edit" && operation.propertyType === "INSTANCE_SWAP" && (!Array.isArray(operation.preferredValues) || operation.preferredValues.length === 0)) {
+      fail("INVALID_INPUT", `operations[${index}].preferredValues must contain at least one preferred value for INSTANCE_SWAP`);
     }
   }
 }
@@ -456,6 +462,7 @@ function validateWriteToolParams(
         if (!isObject(binding)) fail("INVALID_INPUT", `bindings[${index}] must be an object`);
         getString(binding.propertyName, `bindings[${index}].propertyName`);
         if (binding.propertyType !== undefined) validateEnum(binding.propertyType, `bindings[${index}].propertyType`, ["BOOLEAN", "TEXT", "INSTANCE_SWAP", "VARIANT"]);
+        if (binding.propertyType === "INSTANCE_SWAP" && (!Array.isArray(binding.preferredValues) || binding.preferredValues.length === 0)) fail("INVALID_INPUT", `bindings[${index}].preferredValues must contain at least one preferred value for INSTANCE_SWAP`);
         if (binding.defaultValue !== undefined && typeof binding.defaultValue !== "string" && typeof binding.defaultValue !== "boolean") fail("INVALID_INPUT", `bindings[${index}].defaultValue must be a string or boolean`);
         if (binding.value !== undefined && typeof binding.value !== "string" && typeof binding.value !== "boolean") fail("INVALID_INPUT", `bindings[${index}].value must be a string or boolean`);
         if (binding.preferredValues !== undefined) {
