@@ -1,0 +1,5 @@
+interface:
+  display_name: Figma Component Normalizer
+  short_description: Normalize NearHub Figma component structure and bind existing tokens without redesign.
+  icon: 🧩
+  brand_color: '#3D6DFF'
