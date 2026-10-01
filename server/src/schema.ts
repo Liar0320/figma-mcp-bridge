@@ -669,6 +669,7 @@ export const toolInputSchemas = {
   }),
   batch_mutation: withFileKey({
     operations: z.array(batchOperation).min(1).max(100),
+    failureMode: z.enum(["best-effort", "atomic"]).optional().default("best-effort"),
   }),
 } as const;
 

@@ -2049,6 +2049,8 @@ export async function handleWriteRequest(
 
   const context: BatchContext = { refs: new Map() };
   const results: unknown[] = [];
+  const createdNodeIds: string[] = [];
+  const failureMode = params?.failureMode === "atomic" ? "atomic" : "best-effort";
 
   for (let index = 0; index < params.operations.length; index++) {
     try {
@@ -2068,15 +2070,33 @@ export async function handleWriteRequest(
       );
       results.push(result);
 
+      if (isObject(result) && typeof result.nodeId === "string") createdNodeIds.push(result.nodeId);
+
       if (isObject(result) && typeof result.nodeId === "string" && operation.ref) {
         context.refs.set(operation.ref, result.nodeId);
       }
     } catch (error) {
+      const removedNodeIds: string[] = [];
+      const unrevertedNodeIds: string[] = [];
+      if (failureMode === "atomic") {
+        for (const id of [...createdNodeIds].reverse()) {
+          try {
+            const node = await figma.getNodeByIdAsync(id);
+            if (node && node.type !== "DOCUMENT" && node.type !== "PAGE") {
+              node.remove();
+              removedNodeIds.push(id);
+            } else if (node) unrevertedNodeIds.push(id);
+          } catch {
+            unrevertedNodeIds.push(id);
+          }
+        }
+      }
       return {
         executedCount: results.length,
         createdRefs: Object.fromEntries(context.refs),
         failedStepIndex: index,
         failure: toMutationError(error),
+        rollback: { attempted: failureMode === "atomic", completed: unrevertedNodeIds.length === 0, removedNodeIds, unrevertedNodeIds },
         results,
       };
     }

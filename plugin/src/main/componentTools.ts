@@ -467,7 +467,7 @@ export type CreateComponentSetResult = {
   visualPlan?: VisualStylePlan;
   warnings: ComponentDiagnostic[];
   verification?: ComponentSetVerification;
-  rollback?: { attempted: boolean; completed: boolean; removedNodeIds: string[] };
+  rollback?: { attempted: boolean; completed: boolean; removedNodeIds: string[]; unrevertedNodeIds?: string[] };
   valid: boolean;
 };
 
@@ -832,9 +832,18 @@ export const createComponentSet = async (target: TargetSchema, options?: {
     return { ...base, componentSetId: componentSet.id, variantCount: verification.normalized.variants.length, propertySummary, verification, valid: true };
   } catch (error) {
     const removedNodeIds: string[] = [];
+    const unrevertedNodeIds: string[] = [];
     const roots: BaseNode[] = componentSet ? [componentSet] : created;
-    for (const node of roots) { try { const id = node.id; node.remove(); removedNodeIds.push(id); } catch { /* best-effort compensation */ } }
+    for (const node of roots) {
+      try {
+        const id = node.id;
+        node.remove();
+        removedNodeIds.push(id);
+      } catch {
+        unrevertedNodeIds.push(node.id);
+      }
+    }
     const diagnostic = createDiagnostic("CREATE_FAILED", error instanceof Error ? error.message : String(error));
-    return { ...base, propertySummary, warnings: [diagnostic], rollback: { attempted: true, completed: removedNodeIds.length === roots.length, removedNodeIds }, valid: false };
+    return { ...base, propertySummary, warnings: [diagnostic], rollback: { attempted: true, completed: unrevertedNodeIds.length === 0, removedNodeIds, unrevertedNodeIds }, valid: false };
   }
 };

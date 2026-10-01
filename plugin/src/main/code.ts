@@ -21,7 +21,7 @@ import {
 } from "./componentTools";
 import type { TargetSchema } from "./componentTools";
 import { migrateComponentSet, repairComponentSet, buildReconciliationPlan, verifyPostflight } from "./componentMigration";
-import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack } from "./operationJournal";
+import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack, checkpointOperation } from "./operationJournal";
 import { chunkMatrix, createScreenshotReport, componentError, serializeComponentError } from "./componentReliability";
 
 type RequestType =
@@ -136,6 +136,7 @@ type ServerRequest = {
     chunkSize?: number;
     journalId?: string;
     baseline?: string;
+    operations?: Array<{ type?: string }>;
   };
 };
 
@@ -342,12 +343,19 @@ const handleRequest = async (
         if (!entry) throw componentError("COMPONENT_NOT_FOUND", "Operation journal entry not found", { journalId: request.params?.journalId });
         if (!entry.rollback?.supported || !entry.rollback.nodeIds?.length) throw componentError("RECOVERY_UNSUPPORTED", "Operation cannot be rolled back automatically");
         const removed: string[] = [];
+        const unreverted: string[] = [];
         for (const id of entry.rollback.nodeIds) {
-          const node = await figma.getNodeByIdAsync(id);
-          if (node && node.type !== "DOCUMENT" && node.type !== "PAGE") { node.remove(); removed.push(id); }
+          try {
+            const node = await figma.getNodeByIdAsync(id);
+            if (node && node.type !== "DOCUMENT" && node.type !== "PAGE") { node.remove(); removed.push(id); }
+            else if (node) unreverted.push(id);
+          } catch { unreverted.push(id); }
         }
+        entry.rollback.removedNodeIds = removed;
+        entry.rollback.unrevertedNodeIds = unreverted;
+        entry.rollback.supported = unreverted.length === 0;
         markRolledBack(entry);
-        return { type: request.type, requestId: request.requestId, data: { journalId: entry.journalId, removed, status: entry.status } };
+        return { type: request.type, requestId: request.requestId, data: { journalId: entry.journalId, removed, unrevertedNodeIds: unreverted, status: entry.status } };
       }
       case "get_component_screenshot_report": {
         const ids = request.nodeIds ?? [];
@@ -656,6 +664,12 @@ const handleRequest = async (
           const journal = beginOperation(request.type, request.requestId);
           try {
             const data = await handleWriteRequest(request.type, request.nodeIds, request.params as Record<string, unknown> | undefined);
+            if (request.type === "batch_mutation" && data && typeof data === "object" && Array.isArray((data as { results?: unknown[] }).results)) {
+              for (const [step, result] of (data as { results: unknown[] }).results.entries()) {
+                const nodeIds = result && typeof result === "object" && typeof (result as { nodeId?: unknown }).nodeId === "string" ? [(result as { nodeId: string }).nodeId] : [];
+                checkpointOperation(journal, step, request.params?.operations?.[step]?.type ?? "batch_step", nodeIds);
+              }
+            }
             finishOperation(journal, data);
             return {
               type: request.type,
