@@ -16,6 +16,16 @@ const request = async (tool, params = {}, fileKey) => {
 };
 const fail = (reason, code = 2) => { console.error(JSON.stringify({ status: 'not_run', reason, hint: '打开真实 Figma 文件并运行 Figma MCP Bridge 插件后重试。' })); process.exit(code); };
 
+export const sixValues = [
+  { variantProperties: { Type: 'Primary', State: 'Default', Size: 'Small', Icon: 'None' }, properties: { Label: 'Continue', 'Show Icon': false } },
+  { variantProperties: { Type: 'Ghost', State: 'Hover', Size: 'Medium', Icon: 'Right' }, properties: { Label: 'Next', 'Show Icon': true } },
+  { variantProperties: { Type: 'Text', State: 'Active', Size: 'Large', Icon: 'Up' }, properties: { Label: 'Submit', 'Show Icon': true } },
+  { variantProperties: { Type: 'Primary', State: 'Disabled', Size: 'Large', Icon: 'None' }, properties: { Label: 'Save', 'Show Icon': false } },
+  { variantProperties: { Type: 'Ghost', State: 'Default', Size: 'Small', Icon: 'Up' }, properties: { Label: 'Learn more', 'Show Icon': true } },
+  { variantProperties: { Type: 'Text', State: 'Hover', Size: 'Medium', Icon: 'Right' }, properties: { Label: 'Done', 'Show Icon': false } },
+];
+
+export async function runSmoke() {
 try {
   const ping = await fetch(`${baseUrl}/ping`);
   if (!ping.ok) fail(`bridge ping returned ${ping.status}`);
@@ -43,19 +53,21 @@ try {
   const first = inspected.variants[0];
   const instance = await request('create_instance', { componentId: first.id, name: 'CT-33 Button smoke instance' }, fileKey);
   if (!instance?.nodeId) throw new Error(`create_instance returned no nodeId: ${JSON.stringify(instance)}`);
-  const sixValues = [
-    { Label: 'Continue', 'Show Icon': true },
-    { Label: 'Next', 'Show Icon': false },
-    { Label: 'Submit', 'Show Icon': true },
-    { Label: 'Save', 'Show Icon': false },
-    { Label: 'Learn more', 'Show Icon': true },
-    { Label: 'Done', 'Show Icon': false },
-  ];
-  for (const properties of sixValues) await request('set_component_properties', { instanceId: instance.nodeId, properties }, fileKey);
+  for (const value of sixValues) {
+    await request('swap_instance_component', { instanceId: instance.nodeId, componentId: created.componentSetId, variantProperties: value.variantProperties }, fileKey);
+    await request('set_component_properties', { instanceId: instance.nodeId, properties: value.properties }, fileKey);
+  }
   const read = await request('get_node', { nodeId: instance.nodeId }, fileKey);
   if (!read || read.id !== instance.nodeId) throw new Error('get_node did not return the created instance');
-  const reconcile = await request('reconcile_component_set', { componentSetId: created.componentSetId, expected: { id: created.componentSetId, name: 'Button', type: 'COMPONENT_SET' } }, fileKey);
-  if (reconcile?.ok === false || reconcile?.healthy === false) throw new Error(`reconciliation failed: ${JSON.stringify(reconcile)}`);
+  const expected = { id: created.componentSetId, name: 'Button', type: 'COMPONENT_SET' };
+  const reconcile = await request('reconcile_component_set', { componentSetId: created.componentSetId, expected }, fileKey);
+  const reconcileAgain = await request('reconcile_component_set', { componentSetId: created.componentSetId, expected }, fileKey);
+  for (const [label, result] of [['first', reconcile], ['second', reconcileAgain]]) {
+    const verification = result?.verification;
+    const changes = result?.changes ?? verification?.changes ?? result?.plan?.actions;
+    if (!verification?.ok || verification.missing?.length || verification.mismatched?.length || (Array.isArray(changes) && changes.length > 0) || (typeof changes === 'number' && changes !== 0)) throw new Error(`${label} reconciliation reported changes or failed: ${JSON.stringify(result)}`);
+  }
+  if (JSON.stringify(reconcileAgain?.verification) !== JSON.stringify(reconcile?.verification)) throw new Error(`second reconciliation was not idempotent: ${JSON.stringify({ reconcile, reconcileAgain })}`);
   let injectedFailure = false;
   try { await request('set_component_properties', { instanceId: '999999:deliberate-failure', properties: { Label: 'should fail' } }, fileKey); } catch { injectedFailure = true; }
   if (!injectedFailure) throw new Error('deliberate failure was accepted');
@@ -78,3 +90,6 @@ try {
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) await runSmoke();
