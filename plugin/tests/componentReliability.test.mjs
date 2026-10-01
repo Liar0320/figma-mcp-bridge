@@ -47,3 +47,10 @@ test("compatibility matrix marks native undo as unsupported", () => {
   assert.equal(undo?.supported, false);
   assert.match(undo?.fallback ?? "", /RECOVERY_UNSUPPORTED/);
 });
+
+test("capability matrix explicitly lists unsupported Figma operations", () => {
+  const unsupported = componentCompatibilityMatrix.filter((item) => !item.supported).map((item) => item.capability);
+  assert.ok(unsupported.includes("remote library import"));
+  assert.ok(unsupported.includes("pixel-level screenshot diff"));
+  assert.ok(componentCompatibilityMatrix.filter((item) => !item.supported).every((item) => item.fallback));
+});

@@ -113,6 +113,10 @@ export const componentCompatibilityMatrix: CompatibilityMatrix[] = [
   { capability: "rollback created nodes", pluginApi: "node.remove", supported: true },
   { capability: "native undo recovery", pluginApi: "figma.triggerUndo", supported: false, fallback: "returns RECOVERY_UNSUPPORTED" },
   { capability: "visual screenshot report", pluginApi: "exportAsync", supported: true },
+  { capability: "native component property binding", pluginApi: "addComponentProperty + componentPropertyReferences", supported: true },
+  { capability: "instance property values", pluginApi: "InstanceNode.setProperties", supported: true },
+  { capability: "remote library import", pluginApi: "figma.importComponentByKeyAsync", supported: false, fallback: "requires a local component; returns an explicit unsupported diagnostic" },
+  { capability: "pixel-level screenshot diff", pluginApi: "exportAsync only", supported: false, fallback: "runner compares exported bytes by variant and region" },
 ];
 
 export type ScreenshotReport = {
