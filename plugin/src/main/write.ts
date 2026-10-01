@@ -1854,6 +1854,45 @@ async function mutateNode(
   return toMutationResult(node);
 }
 
+/** Apply safe native dimension operations on a component set. */
+function applyDimensionOperations(componentSet: ComponentSetNode, dimensions: unknown, failOnUnsupported = true): { renamed: unknown[]; deleted: unknown[]; remapped: unknown[] } {
+  const ops = Array.isArray(dimensions) ? dimensions : [];
+  const renamed: unknown[] = [];
+  const deleted: unknown[] = [];
+  const remapped: unknown[] = [];
+  for (const raw of ops) {
+    if (!isObject(raw)) fail("INVALID_INPUT", "dimensions entries must be objects");
+    const action = raw.action;
+    const name = typeof raw.name === "string" ? raw.name : "";
+    if (!name || (action !== "rename" && action !== "delete")) fail("INVALID_INPUT", "dimension operation requires action and name");
+    const children = componentSet.children.filter((n): n is ComponentNode => n.type === "COMPONENT");
+    if (action === "rename") {
+      const newName = typeof raw.newName === "string" ? raw.newName : "";
+      if (!newName) fail("INVALID_INPUT", "newName is required when renaming a dimension");
+      if (name === newName) continue;
+      for (const child of children) {
+        const props = isObject((child as any).variantProperties) ? { ...((child as any).variantProperties as Record<string,string>) } : {};
+        if (!(name in props)) continue;
+        const value = props[name];
+        delete props[name];
+        if (newName in props && props[newName] !== value) {
+          // Collapse duplicate dimension keys deterministically by retaining the existing target value.
+          remapped.push({ componentId: child.id, dimension: name, to: newName, value: props[newName] });
+        } else props[newName] = value;
+        (child as any).name = Object.entries(props).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${k}=${v}`).join(", ");
+        renamed.push({ componentId: child.id, from: name, to: newName });
+      }
+      continue;
+    }
+    // Figma does not expose a supported API to delete a variant dimension/property definition.
+    if (failOnUnsupported !== false) {
+      fail("UNSUPPORTED_FIGMA_API", `Deleting dimension ${name} is not supported by the Figma plugin API`, { dimension: name });
+    }
+    deleted.push({ dimension: name, skipped: true });
+  }
+  return { renamed, deleted, remapped };
+}
+
 /** Component migration operations. Unsupported Figma APIs fail closed. */
 async function executeComponentMigration(type: string, params: RequestParams): Promise<unknown> {
   const id = typeof params?.componentSetId === "string" ? params.componentSetId : undefined;
@@ -1871,6 +1910,7 @@ async function executeComponentMigration(type: string, params: RequestParams): P
     return { nodeId: clone.id, sourceId: id, cloned: true, node: serializeNode(clone) };
   }
   if (type === "merge_component_sets" || type === "split_component_set") {
+    // These operations require moving children across component sets; Figma currently exposes no safe atomic API.
     fail("UNSUPPORTED_FIGMA_API", `${type} requires component set mutation APIs unavailable in this plugin runtime`);
   }
   if (type === "migrate_instances") {
@@ -1895,9 +1935,10 @@ async function executeComponentMigration(type: string, params: RequestParams): P
     const desired = (params?.expected && typeof params.expected === "object" ? params.expected : snapshot) as ComponentSnapshot;
     const plan = repairComponentSet(snapshot, desired);
     if (params?.dryRun !== false) return { plan, dryRun: true };
-    if (params?.cloneBeforeMutate !== false) cloneBeforeMutate(node as ComponentSetNode);
-    if (desired.name && desired.name !== node!.name) node!.name = desired.name;
-    return { plan, repaired: true, nodeId: node!.id };
+    const targetNode = (params?.cloneBeforeMutate !== false ? cloneBeforeMutate(node as ComponentSetNode) : node) as ComponentSetNode;
+    if (desired.name && desired.name !== targetNode.name) targetNode.name = desired.name;
+    const dimensions = applyDimensionOperations(targetNode, params?.dimensions, params?.failOnUnsupported !== false);
+    return { plan, repaired: true, nodeId: targetNode.id, sourceId: node!.id, dimensions };
   }
   if (type === "reconcile_component_set") {
     const expected = (params?.expected && typeof params.expected === "object" ? params.expected : {}) as ComponentSnapshot;
@@ -1907,8 +1948,9 @@ async function executeComponentMigration(type: string, params: RequestParams): P
   const targetSnapshot = target && (target.type === "COMPONENT_SET" || target.type === "COMPONENT") ? { id: target.id, name: target.name, type: target.type, width: (target as SceneNode).width, height: (target as SceneNode).height } as ComponentSnapshot : snapshot;
   const plan = migrateComponentSet(snapshot, targetSnapshot, []);
   if (params?.dryRun !== false) return { plan, dryRun: true };
-  if (params?.cloneBeforeMutate !== false) cloneBeforeMutate(node as ComponentSetNode);
-  return { plan, migrated: true, nodeId: node!.id };
+  const targetNode = (params?.cloneBeforeMutate !== false ? cloneBeforeMutate(node as ComponentSetNode) : node) as ComponentSetNode;
+  const dimensions = applyDimensionOperations(targetNode, params?.dimensions, params?.failOnUnsupported !== false);
+  return { plan, migrated: true, nodeId: targetNode.id, sourceId: node!.id, dimensions };
 }
 
 /** Dispatches a single write tool invocation to its concrete implementation. */
