@@ -1901,12 +1901,58 @@ function applyDimensionOperations(componentSet: ComponentSetNode, dimensions: un
 }
 
 /** Component migration operations. Unsupported Figma APIs fail closed. */
+function componentSnapshot(node: ComponentNode | ComponentSetNode): ComponentSnapshot {
+  return {
+    id: node.id,
+    name: node.name,
+    type: node.type,
+    width: (node as SceneNode).width,
+    height: (node as SceneNode).height,
+    variantProperties: node.type === "COMPONENT" ? ((node as ComponentNode).variantProperties ?? null) : undefined,
+  };
+}
+
+function componentVariants(set: ComponentSetNode): ComponentNode[] {
+  return set.children.filter((n): n is ComponentNode => n.type === "COMPONENT");
+}
+
+function cloneComponent(component: ComponentNode): ComponentNode {
+  if (typeof (component as any).clone !== "function") fail("UNSUPPORTED_FIGMA_API", "clone is not supported by this Figma runtime");
+  return (component as any).clone() as ComponentNode;
+}
+
+function cloneVariants(sets: ComponentSetNode[]): ComponentNode[] {
+  const clones: ComponentNode[] = [];
+  for (const set of sets) for (const variant of componentVariants(set)) clones.push(cloneComponent(variant));
+  return clones;
+}
+
+function combineClones(clones: ComponentNode[], parent: BaseNode & ChildrenMixin, name?: string): ComponentSetNode {
+  if (clones.length < 2) fail("INVALID_COMPONENT_SET", "at least two variants are required");
+  let output: ComponentSetNode;
+  try { output = figma.combineAsVariants(clones, parent); }
+  catch (error) { for (const clone of clones) { try { clone.remove(); } catch {} } fail("FIGMA_API_LIMITATION", `Unable to combine variants: ${error instanceof Error ? error.message : String(error)}`); }
+  if (name) output.name = name;
+  return output;
+}
+
+function variantSchema(set: ComponentSetNode): Record<string, string>[] {
+  return componentVariants(set).map((v) => {
+    const parsed = Object.fromEntries(v.name.split(",").map((x) => x.trim().split("=").map((y) => y.trim())).filter((x) => x.length === 2));
+    return { ...((v as any).variantProperties ?? {}), ...parsed };
+  });
+}
+
+/** Executes component migration using clone+combine so source nodes remain untouched. */
 async function executeComponentMigration(type: string, params: RequestParams): Promise<unknown> {
   const id = typeof params?.componentSetId === "string" ? params.componentSetId : undefined;
   if (!id && type !== "merge_component_sets") fail("INVALID_INPUT", "componentSetId is required");
   const node = id ? await figma.getNodeByIdAsync(id) : null;
   if (id && (!node || node.type !== "COMPONENT_SET")) fail("INVALID_COMPONENT_SET", "componentSetId must reference a COMPONENT_SET node");
+  const dryRun = params?.dryRun !== false;
+
   if (type === "clone_component_set") {
+    if (dryRun) return { plan: { sourceId: id, name: params?.name ?? node!.name }, dryRun: true };
     const clone = cloneBeforeMutate(node as ComponentSetNode) as ComponentSetNode;
     if (params?.name && typeof params.name === "string") clone.name = params.name;
     if (params?.parentId && typeof params.parentId === "string") {
@@ -1916,48 +1962,84 @@ async function executeComponentMigration(type: string, params: RequestParams): P
     }
     return { nodeId: clone.id, sourceId: id, cloned: true, node: serializeNode(clone) };
   }
-  if (type === "merge_component_sets" || type === "split_component_set") {
-    // These operations require moving children across component sets; Figma currently exposes no safe atomic API.
-    fail("UNSUPPORTED_FIGMA_API", `${type} requires component set mutation APIs unavailable in this plugin runtime`);
+
+  if (type === "merge_component_sets") {
+    const sourceId = getString(params?.sourceComponentSetId ?? params?.componentSetId, "sourceComponentSetId");
+    const targetId = getString(params?.targetComponentSetId, "targetComponentSetId");
+    const source = await figma.getNodeByIdAsync(sourceId); const target = await figma.getNodeByIdAsync(targetId);
+    if (!source || source.type !== "COMPONENT_SET" || !target || target.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", "source and target must be COMPONENT_SET nodes");
+    const plan = { sourceComponentSetId: sourceId, targetComponentSetId: targetId, variantCount: componentVariants(source as ComponentSetNode).length + componentVariants(target as ComponentSetNode).length };
+    if (dryRun) return { plan, dryRun: true };
+    const parent = (target as ComponentSetNode).parent; if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "target component set has no valid parent");
+    const clones = cloneVariants([target as ComponentSetNode, source as ComponentSetNode]);
+    const output = combineClones(clones, parent as BaseNode & ChildrenMixin, typeof params?.name === "string" ? params.name : undefined);
+    return { merged: true, sourceComponentSetId: sourceId, targetComponentSetId: targetId, nodeId: output.id, node: serializeNode(output) };
   }
+
+  if (type === "split_component_set") {
+    const set = node as ComponentSetNode; const ids = Array.isArray(params?.componentIds) ? params.componentIds.filter((x): x is string => typeof x === "string") : [];
+    const selected = componentVariants(set).filter((v) => ids.length === 0 || ids.includes(v.id));
+    if (!selected.length) fail("NO_COMPONENTS_TO_SPLIT", "no matching variants to split");
+    const plan = { sourceComponentSetId: set.id, componentIds: selected.map((v) => v.id) };
+    if (dryRun) return { plan, dryRun: true };
+    const parent = set.parent; if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "component set has no valid parent");
+    const output = combineClones(selected.map(cloneComponent), parent as BaseNode & ChildrenMixin, typeof params?.name === "string" ? params.name : undefined);
+    return { split: true, sourceComponentSetId: set.id, nodeId: output.id, node: serializeNode(output), componentIds: selected.map((v) => v.id) };
+  }
+
   if (type === "migrate_instances") {
-    const targetId = typeof params?.targetComponentSetId === "string" ? params.targetComponentSetId : undefined;
-    if (!targetId) fail("INVALID_INPUT", "targetComponentSetId is required");
+    const targetId = getString(params?.targetComponentSetId, "targetComponentSetId");
     const target = await figma.getNodeByIdAsync(targetId);
     if (!target || target.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", "targetComponentSetId must reference a COMPONENT_SET");
+    const variants = componentVariants(target as ComponentSetNode); if (!variants.length) fail("INVALID_COMPONENT_SET", "target component set has no variants");
     const ids = Array.isArray(params?.instanceIds) ? params.instanceIds.filter((x): x is string => typeof x === "string") : [];
-    const variants = (target as ComponentSetNode).children.filter((n): n is ComponentNode => n.type === "COMPONENT");
-    const remapped: unknown[] = [];
+    const instances: InstanceNode[] = []; const classifications: any[] = [];
+    const byKey = new Map(variants.map((v) => [v.key, v]));
     for (const instanceId of ids) {
-      const instance = await figma.getNodeByIdAsync(instanceId);
-      if (!instance || instance.type !== "INSTANCE") continue;
-      if (!variants.length) fail("INVALID_COMPONENT_SET", "target component set has no variants");
-      (instance as InstanceNode).swapComponent(variants[0]);
-      remapped.push({ instanceId, targetComponentId: variants[0].id });
+      const raw = await figma.getNodeByIdAsync(instanceId); if (!raw || raw.type !== "INSTANCE") { classifications.push({ instanceId, classification: "unmapped" }); continue; }
+      const inst = raw as InstanceNode; instances.push(inst);
+      const main = inst.mainComponent; const match = variants.find((v) => v.id === main?.id) ?? variants.find((v) => (v as any).variantProperties && (inst as any).variantProperties && JSON.stringify((v as any).variantProperties) === JSON.stringify((inst as any).variantProperties)) ?? (main?.key ? byKey.get(main.key) : undefined);
+      if (!match) classifications.push({ instanceId, classification: "unmapped" }); else classifications.push({ instanceId, classification: main?.id === match.id ? "exact" : "variant", targetComponentId: match.id });
     }
-    return { remapped, targetComponentSetId: targetId };
+    const unmapped = classifications.filter((x) => x.classification === "unmapped");
+    if (unmapped.length) fail("INSTANCE_MIGRATION_CONFLICT", "one or more instances cannot be classified", { classifications });
+    if (dryRun) return { dryRun: true, targetComponentSetId: targetId, classifications };
+    const changed: Array<{ instance: InstanceNode; from: ComponentNode; to: ComponentNode }> = [];
+    try {
+      for (const c of classifications) { if (!c.targetComponentId) continue; const inst = instances.find((i) => i.id === c.instanceId)!; const from = inst.mainComponent; const to = variants.find((v) => v.id === c.targetComponentId)!; if (from && from.id !== to.id) { inst.swapComponent(to); changed.push({ instance: inst, from, to }); } }
+    } catch (error) {
+      for (const item of changed) { try { item.instance.swapComponent(item.from); } catch {} }
+      fail("INSTANCE_MIGRATION_FAILED", `instance migration failed: ${error instanceof Error ? error.message : String(error)}`, { compensated: true });
+    }
+    return { migrated: true, targetComponentSetId: targetId, classifications, remapped: changed.map((x) => ({ instanceId: x.instance.id, targetComponentId: x.to.id })) };
   }
-  const snapshot = { id: node!.id, name: node!.name, type: node!.type, width: (node as SceneNode).width, height: (node as SceneNode).height } as ComponentSnapshot;
-  if (type === "repair_component_set") {
-    const desired = (params?.expected && typeof params.expected === "object" ? params.expected : snapshot) as ComponentSnapshot;
-    const plan = repairComponentSet(snapshot, desired);
-    if (params?.dryRun !== false) return { plan, dryRun: true };
-    const targetNode = (params?.cloneBeforeMutate !== false ? cloneBeforeMutate(node as ComponentSetNode) : node) as ComponentSetNode;
-    if (desired.name && desired.name !== targetNode.name) targetNode.name = desired.name;
-    const dimensions = applyDimensionOperations(targetNode, params?.dimensions, params?.failOnUnsupported !== false);
-    return { plan, repaired: true, nodeId: targetNode.id, sourceId: node!.id, dimensions };
-  }
+
+  const set = node as ComponentSetNode;
+  const snapshot = componentSnapshot(set);
   if (type === "reconcile_component_set") {
-    const expected = (params?.expected && typeof params.expected === "object" ? params.expected : {}) as ComponentSnapshot;
-    return { verification: verifyPostflight([expected], [snapshot]) };
+    const expected = (params?.expected && typeof params.expected === "object" ? params.expected : {}) as any;
+    const expectedName = typeof expected.name === "string" ? expected.name : set.name;
+    const expectedVariants = Array.isArray(expected.variants) ? expected.variants : undefined;
+    const actualVariants = variantSchema(set);
+    const schemaMatches = !expectedVariants || JSON.stringify(expectedVariants) === JSON.stringify(actualVariants);
+    const verification = { ok: expectedName === set.name && schemaMatches, mismatched: expectedName !== set.name || !schemaMatches ? [set.id] : [], missing: [] };
+    if (verification.ok || dryRun) return { verification, dryRun: dryRun || verification.ok, noOp: verification.ok };
+    params = { ...params, expected: { ...expected, name: expectedName } };
   }
-  const target = (params?.targetComponentSetId ? await figma.getNodeByIdAsync(String(params.targetComponentSetId)) : node) as BaseNode | null;
-  const targetSnapshot = target && (target.type === "COMPONENT_SET" || target.type === "COMPONENT") ? { id: target.id, name: target.name, type: target.type, width: (target as SceneNode).width, height: (target as SceneNode).height } as ComponentSnapshot : snapshot;
-  const plan = migrateComponentSet(snapshot, targetSnapshot, []);
-  if (params?.dryRun !== false) return { plan, dryRun: true };
-  const targetNode = (params?.cloneBeforeMutate !== false ? cloneBeforeMutate(node as ComponentSetNode) : node) as ComponentSetNode;
-  const dimensions = applyDimensionOperations(targetNode, params?.dimensions, params?.failOnUnsupported !== false);
-  return { plan, migrated: true, nodeId: targetNode.id, sourceId: node!.id, dimensions };
+  const desired = (params?.expected && typeof params.expected === "object" ? params.expected : snapshot) as ComponentSnapshot;
+  const plan = type === "repair_component_set" ? repairComponentSet(snapshot, desired) : migrateComponentSet(snapshot, desired, []);
+  if (dryRun) return { plan, dryRun: true };
+  const parent = set.parent; if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "component set has no valid parent");
+  const clones = cloneVariants([set]);
+  if (desired.name && desired.name !== set.name) { /* name is applied to rebuilt set below */ }
+  const output = combineClones(clones, parent as BaseNode & ChildrenMixin, desired.name ?? set.name);
+  try {
+    const dimensions = applyDimensionOperations(output, params?.dimensions, params?.failOnUnsupported !== false);
+    return { repaired: type === "repair_component_set", migrated: type !== "repair_component_set", sourceId: set.id, nodeId: output.id, node: serializeNode(output), dimensions, noOp: false };
+  } catch (error) {
+    try { output.remove(); } catch {}
+    throw error;
+  }
 }
 
 /** Dispatches a single write tool invocation to its concrete implementation. */

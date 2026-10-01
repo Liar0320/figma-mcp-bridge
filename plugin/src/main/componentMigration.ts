@@ -163,19 +163,15 @@ export function planDimensionRename(
   if (!from || !to) throw new Error("INVALID_DIMENSION_NAME");
   const remap: Record<string, string> = {};
   const removed: string[] = [];
-  const result = dimensions.map((d) => ({ name: d.name === from ? to : d.name, values: [...d.values] }));
-  const target = result.find((d) => d.name === to);
   const source = dimensions.find((d) => d.name === from);
-  if (source && target && source !== target) {
-    const seen = new Set(target.values);
-    for (const value of source.values) {
-      if (seen.has(value)) { removed.push(value); continue; }
-      seen.add(value); target.values.push(value);
-    }
-    // Keep a single renamed dimension when source and destination collide.
-    const first = result.findIndex((d) => d.name === to);
-    for (let i = result.length - 1; i > first; i--) if (result[i].name === to) result.splice(i, 1);
-  }
+  const existingTarget = dimensions.find((d) => d.name === to);
+  const result = dimensions.filter((d) => d.name !== from && d.name !== to).map((d) => ({ name: d.name, values: [...d.values] }));
+  if (source) {
+    const mergedValues = [...(existingTarget?.values ?? []), ...source.values];
+    const unique: string[] = [];
+    for (const value of mergedValues) { if (unique.includes(value)) removed.push(value); else unique.push(value); }
+    result.push({ name: to, values: unique });
+  } else if (existingTarget) result.push({ name: to, values: [...existingTarget.values] });
   for (const d of result) {
     const unique: string[] = [];
     for (const value of d.values) { if (!unique.includes(value)) unique.push(value); else removed.push(value); }
