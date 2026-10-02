@@ -58,6 +58,15 @@ body {
   color: var(--text-value);
 }
 
+.build-row .info-label {
+  width: 50px;
+}
+
+.build-id {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .footer {
   display: flex;
   justify-content: space-between;
