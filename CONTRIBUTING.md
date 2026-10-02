@@ -2,6 +2,10 @@
 
 Thanks for contributing to Figma MCP Bridge. This repository uses Conventional Commits so GitHub Releases can be generated automatically from commit history.
 
+## Issue tracking
+
+Use [GitHub Issues](https://github.com/Liar0320/figma-mcp-bridge/issues) for bugs, features, and maintenance work. State the expected behavior, scope, and verifiable completion criteria; link the issue from the pull request.
+
 ## Conventional Commits
 
 Use this format for commits and PR titles when possible:

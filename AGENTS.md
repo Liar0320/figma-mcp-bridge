@@ -1,11 +1,9 @@
 # AGENTS.md
 
 This file gives AI coding agents repository-specific contribution rules for Figma MCP Bridge.
-## Linear
+## GitHub Issues
 
-- Workspace: `luca-hermes`
-- Team: `Hermes` (`HER`)
-- Project: `Figma MCP Bridge CLI` ([Linear](https://linear.app/luca-hermes/project/figma-mcp-bridge-cli-ab2014876d3b))
+Track project work in [GitHub Issues](https://github.com/Liar0320/figma-mcp-bridge/issues). Use issues for scope, acceptance criteria, and progress; link relevant pull requests to the issue.
 
 ## Commit and PR messages
 
