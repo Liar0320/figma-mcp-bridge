@@ -1,4 +1,4 @@
-import { serializeNode } from "./serializer";
+import { serializeNode, type SerializedNode } from "./serializer";
 import {
   buildReconciliationPlan,
   cloneBeforeMutate,
@@ -28,11 +28,11 @@ type MutationResult = {
   name: string;
   parentId?: string;
   key?: string;
-  node: ReturnType<typeof serializeNode>;
+  node: SerializedNode;
 };
 
 type FindNodeResult = Omit<MutationResult, "node"> & {
-  node?: ReturnType<typeof serializeNode>;
+  node?: SerializedNode;
   pageId?: string;
   pageName?: string;
   path: string[];
@@ -381,6 +381,34 @@ function validateWriteToolParams(
       if (params?.cloneBeforeMutate !== undefined && typeof params.cloneBeforeMutate !== "boolean") fail("INVALID_INPUT", "cloneBeforeMutate must be a boolean");
       if (params?.failOnUnsupported !== undefined && typeof params.failOnUnsupported !== "boolean") fail("INVALID_INPUT", "failOnUnsupported must be a boolean");
       if (params?.verify !== undefined && typeof params.verify !== "boolean") fail("INVALID_INPUT", "verify must be a boolean");
+      if (type !== "merge_component_sets" && type !== "migrate_instances") getFigmaNodeId(params?.componentSetId, "componentSetId");
+      if (type === "clone_component_set") {
+        getOptionalFigmaNodeId(params?.parentId, "parentId");
+        getOptionalNonEmptyString(params?.name, "name");
+      }
+      if (type === "merge_component_sets") {
+        if (!Array.isArray(params?.componentSetIds) || params.componentSetIds.length < 2) fail("INVALID_INPUT", "componentSetIds must contain at least two component IDs");
+        params.componentSetIds.forEach((value, index) => getFigmaNodeId(value, `componentSetIds[${index}]`));
+        if (new Set(params.componentSetIds).size !== params.componentSetIds.length) fail("INVALID_INPUT", "componentSetIds must not contain duplicates");
+        getOptionalFigmaNodeId(params?.targetComponentSetId, "targetComponentSetId");
+      }
+      if (type === "split_component_set") {
+        if (!Array.isArray(params?.groups) || params.groups.length < 1) fail("INVALID_INPUT", "groups must contain at least one group");
+        params.groups.forEach((value, index) => {
+          if (!isObject(value)) fail("INVALID_INPUT", `groups[${index}] must be an object`);
+          getNodeName(value.name, `groups[${index}].name`);
+          if (!Array.isArray(value.componentIds) || value.componentIds.length < 1) fail("INVALID_INPUT", `groups[${index}].componentIds must contain at least one component ID`);
+          value.componentIds.forEach((componentId, componentIndex) => getFigmaNodeId(componentId, `groups[${index}].componentIds[${componentIndex}]`));
+        });
+        if (params?.deleteSource !== undefined && typeof params.deleteSource !== "boolean") fail("INVALID_INPUT", "deleteSource must be a boolean");
+      }
+      if (type === "migrate_instances") {
+        getFigmaNodeId(params?.targetComponentSetId, "targetComponentSetId");
+        if (params?.instanceIds !== undefined) {
+          if (!Array.isArray(params.instanceIds) || params.instanceIds.length < 1) fail("INVALID_INPUT", "instanceIds must contain at least one instance ID");
+          params.instanceIds.forEach((value, index) => getFigmaNodeId(value, `instanceIds[${index}]`));
+        }
+      }
       return;
     case "create_frame":
     case "create_component":
@@ -1900,6 +1928,17 @@ function applyDimensionOperations(componentSet: ComponentSetNode, dimensions: un
   return { renamed, deleted, remapped };
 }
 
+type InstanceMigrationClassification = {
+  instanceId: string;
+  classification: "exact" | "variant" | "unmapped";
+  targetComponentId?: string;
+};
+
+function readVariantProperties(node: object): Record<string, unknown> | null {
+  if (!("variantProperties" in node) || !isObject(node.variantProperties)) return null;
+  return node.variantProperties;
+}
+
 /** Component migration operations. Unsupported Figma APIs fail closed. */
 function componentSnapshot(node: ComponentNode | ComponentSetNode): ComponentSnapshot {
   return {
@@ -1964,27 +2003,78 @@ async function executeComponentMigration(type: string, params: RequestParams): P
   }
 
   if (type === "merge_component_sets") {
-    const sourceId = getString(params?.sourceComponentSetId ?? params?.componentSetId, "sourceComponentSetId");
-    const targetId = getString(params?.targetComponentSetId, "targetComponentSetId");
-    const source = await figma.getNodeByIdAsync(sourceId); const target = await figma.getNodeByIdAsync(targetId);
-    if (!source || source.type !== "COMPONENT_SET" || !target || target.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", "source and target must be COMPONENT_SET nodes");
-    const plan = { sourceComponentSetId: sourceId, targetComponentSetId: targetId, variantCount: componentVariants(source as ComponentSetNode).length + componentVariants(target as ComponentSetNode).length };
+    const declaredIds = Array.isArray(params?.componentSetIds)
+      ? params.componentSetIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const sourceId = getString(params?.sourceComponentSetId ?? params?.componentSetId ?? declaredIds[0], "sourceComponentSetId");
+    const targetId = getString(params?.targetComponentSetId ?? declaredIds[1], "targetComponentSetId");
+    const setIds = [...new Set([sourceId, targetId, ...declaredIds])];
+    if (setIds.length < 2) fail("INVALID_INPUT", "merge_component_sets requires at least two distinct component sets");
+    const sets: ComponentSetNode[] = [];
+    for (const setId of setIds) {
+      const candidate = await figma.getNodeByIdAsync(setId);
+      if (!candidate || candidate.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", `${setId} must reference a COMPONENT_SET node`);
+      sets.push(candidate as ComponentSetNode);
+    }
+    const plan = {
+      sourceComponentSetIds: sets.map((set) => set.id),
+      targetComponentSetId: targetId,
+      variantCount: sets.reduce((count, set) => count + componentVariants(set).length, 0),
+    };
     if (dryRun) return { plan, dryRun: true };
-    const parent = (target as ComponentSetNode).parent; if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "target component set has no valid parent");
-    const clones = cloneVariants([target as ComponentSetNode, source as ComponentSetNode]);
-    const output = combineClones(clones, parent as BaseNode & ChildrenMixin, typeof params?.name === "string" ? params.name : undefined);
-    return { merged: true, sourceComponentSetId: sourceId, targetComponentSetId: targetId, nodeId: output.id, node: serializeNode(output) };
+    const parent = sets[0].parent;
+    if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "component sets must have a valid parent");
+    const output = combineClones(cloneVariants(sets), parent as BaseNode & ChildrenMixin, typeof params?.name === "string" ? params.name : undefined);
+    return {
+      merged: true,
+      sourceComponentSetIds: sets.map((set) => set.id),
+      targetComponentSetId: targetId,
+      nodeId: output.id,
+      node: serializeNode(output),
+    };
   }
 
   if (type === "split_component_set") {
-    const set = node as ComponentSetNode; const ids = Array.isArray(params?.componentIds) ? params.componentIds.filter((x): x is string => typeof x === "string") : [];
-    const selected = componentVariants(set).filter((v) => ids.length === 0 || ids.includes(v.id));
-    if (!selected.length) fail("NO_COMPONENTS_TO_SPLIT", "no matching variants to split");
-    const plan = { sourceComponentSetId: set.id, componentIds: selected.map((v) => v.id) };
+    const set = node as ComponentSetNode;
+    const groups = Array.isArray(params?.groups)
+      ? params.groups.filter(isObject)
+      : [];
+    const legacyIds = Array.isArray(params?.componentIds)
+      ? params.componentIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const requestedGroups = groups.length > 0
+      ? groups.map((group, index) => ({
+          name: typeof group.name === "string" ? group.name : `Split ${index + 1}`,
+          componentIds: Array.isArray(group.componentIds)
+            ? group.componentIds.filter((value): value is string => typeof value === "string")
+            : [],
+        }))
+      : [{ name: typeof params?.name === "string" ? params.name : set.name, componentIds: legacyIds }];
+    const variants = componentVariants(set);
+    const outputsPlan = requestedGroups.map((group) => {
+      const selected = variants.filter((variant) => group.componentIds.length === 0 || group.componentIds.includes(variant.id));
+      if (selected.length < 2) fail("NO_COMPONENTS_TO_SPLIT", `group '${group.name}' must select at least two matching variants`);
+      return { name: group.name, componentIds: selected.map((variant) => variant.id) };
+    });
+    const plan = { sourceComponentSetId: set.id, groups: outputsPlan };
     if (dryRun) return { plan, dryRun: true };
-    const parent = set.parent; if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "component set has no valid parent");
-    const output = combineClones(selected.map(cloneComponent), parent as BaseNode & ChildrenMixin, typeof params?.name === "string" ? params.name : undefined);
-    return { split: true, sourceComponentSetId: set.id, nodeId: output.id, node: serializeNode(output), componentIds: selected.map((v) => v.id) };
+    const parent = set.parent;
+    if (!parent || !("appendChild" in parent)) fail("INVALID_TARGET_PARENT", "component set has no valid parent");
+    const outputs: Array<{ nodeId: string; name: string; componentIds: string[]; node: SerializedNode }> = [];
+    try {
+      for (const group of outputsPlan) {
+        const selected = variants.filter((variant) => group.componentIds.includes(variant.id));
+        const output = combineClones(selected.map(cloneComponent), parent as BaseNode & ChildrenMixin, group.name);
+        outputs.push({ nodeId: output.id, name: output.name, componentIds: group.componentIds, node: serializeNode(output) });
+      }
+    } catch (error) {
+      for (const output of outputs) {
+        try { (await figma.getNodeByIdAsync(output.nodeId))?.remove(); } catch {}
+      }
+      throw error;
+    }
+    if (params?.deleteSource === true) set.remove();
+    return { split: true, sourceComponentSetId: set.id, outputs, nodeId: outputs[0]?.nodeId };
   }
 
   if (type === "migrate_instances") {
@@ -1993,12 +2083,13 @@ async function executeComponentMigration(type: string, params: RequestParams): P
     if (!target || target.type !== "COMPONENT_SET") fail("INVALID_COMPONENT_SET", "targetComponentSetId must reference a COMPONENT_SET");
     const variants = componentVariants(target as ComponentSetNode); if (!variants.length) fail("INVALID_COMPONENT_SET", "target component set has no variants");
     const ids = Array.isArray(params?.instanceIds) ? params.instanceIds.filter((x): x is string => typeof x === "string") : [];
-    const instances: InstanceNode[] = []; const classifications: any[] = [];
+    const instances: InstanceNode[] = []; const classifications: InstanceMigrationClassification[] = [];
     const byKey = new Map(variants.map((v) => [v.key, v]));
     for (const instanceId of ids) {
       const raw = await figma.getNodeByIdAsync(instanceId); if (!raw || raw.type !== "INSTANCE") { classifications.push({ instanceId, classification: "unmapped" }); continue; }
       const inst = raw as InstanceNode; instances.push(inst);
-      const main = inst.mainComponent; const match = variants.find((v) => v.id === main?.id) ?? variants.find((v) => (v as any).variantProperties && (inst as any).variantProperties && JSON.stringify((v as any).variantProperties) === JSON.stringify((inst as any).variantProperties)) ?? (main?.key ? byKey.get(main.key) : undefined);
+      const main = inst.mainComponent;
+      const match = variants.find((v) => v.id === main?.id) ?? variants.find((v) => JSON.stringify(v.variantProperties ?? null) === JSON.stringify(readVariantProperties(inst) ?? null)) ?? (main?.key ? byKey.get(main.key) : undefined);
       if (!match) classifications.push({ instanceId, classification: "unmapped" }); else classifications.push({ instanceId, classification: main?.id === match.id ? "exact" : "variant", targetComponentId: match.id });
     }
     const unmapped = classifications.filter((x) => x.classification === "unmapped");

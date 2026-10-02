@@ -92,7 +92,7 @@ type SerializedBounds = {
   height: number;
 };
 
-type SerializedNode = {
+export type SerializedNode = {
   id: string;
   name: string;
   type: string;
