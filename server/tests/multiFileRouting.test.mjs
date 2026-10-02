@@ -117,6 +117,19 @@ test("component inventory schemas expose bounded pagination fields", () => {
     assert.throws(() => schema.parse({ limit: 0 }), /Number must be greater than or equal to 1/);
   }
 });
+test("set_layout_mode accepts optional primary-axis sizing mode", () => {
+  const schema = toolInputSchemas.set_layout_mode;
+  assert.doesNotThrow(() => schema.parse({
+    nodeId: "1:2",
+    layoutMode: "HORIZONTAL",
+    primaryAxisSizingMode: "AUTO",
+  }));
+  assert.throws(() => schema.parse({
+    nodeId: "1:2",
+    layoutMode: "HORIZONTAL",
+    primaryAxisSizingMode: "HUG",
+  }));
+});
 
 test("bridge routes explicit fileKey and fails closed when ambiguous", async () => {
   const bridge = new Bridge();

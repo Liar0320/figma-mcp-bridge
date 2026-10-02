@@ -26,6 +26,7 @@ assert.equal(visualPlan?.source, "built-in");
 assert.equal(visualPlan?.variants.length, 108);
 const tupleVariant = (plan, values) => plan?.variants.find((item) => item.tuple.every((value, index) => value === values[buttonValidation.normalized.dimensions[index].name]));
 const primaryDefaultSmall = tupleVariant(visualPlan, { Type: "Primary", State: "Default", Size: "Small", Icon: "None" });
+assert.equal(primaryDefaultSmall?.primaryAxisSizingMode, "AUTO");
 assert.deepEqual(primaryDefaultSmall && {
   fill: primaryDefaultSmall.fill,
   height: primaryDefaultSmall.height,

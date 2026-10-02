@@ -66,6 +66,30 @@ const exactFillUsage = {
     reason: "Exact color value match",
   },
 };
+const paintStyleToken = {
+  path: "color.brand.primary",
+  name: "Brand/Primary",
+  group: "color",
+  source: "style",
+  styleType: "paint",
+  value: { color: "#3366ff", opacity: 1 },
+  figmaId: "S:1:4",
+};
+
+const exactFillStyleUsage = {
+  ...exactFillUsage,
+  match: {
+    ...exactFillUsage.match,
+    tokenSource: "style",
+    tokenFigmaId: "S:1:4",
+  },
+};
+
+const exactStrokeStyleUsage = {
+  ...exactFillStyleUsage,
+  property: "strokes[0].color",
+};
+
 
 const exactTypographyUsage = {
   nodeId: "1:2",
@@ -191,6 +215,48 @@ async function testTextStyleApplicationUsesAsyncApi() {
   assert.equal(result.status, "applied");
   assert.deepEqual(calls, ["S:1:2"]);
 }
+async function testPaintStyleApplicationUsesAsyncApis() {
+  const calls = [];
+  const node = {
+    id: "1:1",
+    type: "RECTANGLE",
+    visible: true,
+    async setFillStyleIdAsync(styleId) {
+      calls.push(`fill:${styleId}`);
+    },
+    async setStrokeStyleIdAsync(styleId) {
+      calls.push(`stroke:${styleId}`);
+    },
+    set fillStyleId(_styleId) {
+      throw new Error("sync fillStyleId setter should not be used in dynamic-page mode");
+    },
+    set strokeStyleId(_styleId) {
+      throw new Error("sync strokeStyleId setter should not be used in dynamic-page mode");
+    },
+  };
+  globalThis.figma = {
+    async getStyleByIdAsync(id) {
+      return { id, type: "PAINT", name: "Brand/Primary" };
+    },
+    async getNodeByIdAsync() {
+      return node;
+    },
+  };
+
+  const planned = planApplyTokens(
+    { dryRun: false },
+    [exactFillStyleUsage, exactStrokeStyleUsage],
+    [paintStyleToken],
+    context,
+    scope,
+  );
+  for (const item of planned.results) {
+    const result = await applyPlanItemForTest({ ...item, status: "planned" });
+    assert.equal(result.status, "applied");
+  }
+  assert.deepEqual(calls, ["fill:S:1:4", "stroke:S:1:4"]);
+}
+
 
 function testPartialSuccessMetadataIncludesGroups() {
   const response = planApplyTokens({ dryRun: false, failureMode: "grouped" }, [exactFillUsage, exactTypographyUsage], tokens, context, scope);
@@ -288,6 +354,7 @@ async function runTests() {
     ["testMissingFigmaIdSkips", testMissingFigmaIdSkips],
     ["testExplicitDryRunFalseStillPlansForMutationPhase", testExplicitDryRunFalseStillPlansForMutationPhase],
     ["testTextStyleApplicationUsesAsyncApi", testTextStyleApplicationUsesAsyncApi],
+    ["testPaintStyleApplicationUsesAsyncApis", testPaintStyleApplicationUsesAsyncApis],
     ["testPartialSuccessMetadataIncludesGroups", testPartialSuccessMetadataIncludesGroups],
     ["testNoopFloatBindingReturnsError", testNoopFloatBindingReturnsError],
     ["testCornerRadiusBindsIndividualRadiusFields", testCornerRadiusBindsIndividualRadiusFields],

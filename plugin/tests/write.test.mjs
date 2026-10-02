@@ -398,6 +398,30 @@ async function testCreateComponentCreatesNamedComponent() {
   assert.equal(component.paddingLeft, 16);
 }
 
+/** Verifies set_layout_mode applies an AUTO main-axis sizing mode through batch_mutation. */
+async function testBatchSetLayoutModeSetsPrimaryAxisSizingMode() {
+  globalThis.figma = createMockFigma();
+  const frame = await handleWriteRequest("create_frame", undefined, {
+    name: "Hug Button",
+    layoutMode: "HORIZONTAL",
+  });
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    operations: [{
+      type: "set_layout_mode",
+      params: {
+        nodeId: frame.nodeId,
+        layoutMode: "HORIZONTAL",
+        primaryAxisSizingMode: "AUTO",
+      },
+    }],
+  });
+
+  assert.equal(result.executedCount, 1);
+  const node = await globalThis.figma.getNodeByIdAsync(frame.nodeId);
+  assert.equal(node.primaryAxisSizingMode, "AUTO");
+}
+
 /** Verifies create_instance instantiates a local component and applies placement fields. */
 async function testCreateInstanceFromLocalComponent() {
   globalThis.figma = createMockFigma();
@@ -1693,6 +1717,7 @@ async function runTests() {
     ["testSetNodeNameMissingNodeReportsNotFound", testSetNodeNameMissingNodeReportsNotFound],
     ["testCreateComponentCreatesNamedComponent", testCreateComponentCreatesNamedComponent],
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
+    ["testBatchSetLayoutModeSetsPrimaryAxisSizingMode", testBatchSetLayoutModeSetsPrimaryAxisSizingMode],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
     ["testCreateInstanceFromCrossPageComponent", testCreateInstanceFromCrossPageComponent],

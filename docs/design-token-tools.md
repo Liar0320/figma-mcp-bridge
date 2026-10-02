@@ -37,6 +37,8 @@ Do not treat `exactValue` as an applied token. It is useful for migration propos
 4. Re-run with `dryRun=false` only when the plan is correct.
 5. Re-read tokens or usage after the write to verify the result.
 
+
+When applying local styles, the plugin uses Figma's asynchronous text, fill, and stroke style-ID APIs when available, as required by dynamic-page documents.
 ## Export Formats
 
 `export_design_tokens` supports:

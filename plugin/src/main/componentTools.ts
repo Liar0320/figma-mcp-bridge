@@ -463,6 +463,7 @@ export type VisualStylePlan = {
     iconVisible?: boolean;
     iconRotation?: number;
     layoutMode?: "HORIZONTAL" | "VERTICAL";
+    primaryAxisSizingMode?: "AUTO" | "FIXED";
     primaryAxisAlignItems?: string;
     counterAxisAlignItems?: string;
   }>;
@@ -599,11 +600,14 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
     const iconVisible = boolValue(icon, "iconVisible");
     const iconSize = numberValue(icon, "iconSize");
     const paddingX = numberValue(size, "paddingX");
-    const width = numberValue(size, "width") ?? numberValue(template, "width") ?? (
+    const explicitWidth = numberValue(size, "width") ?? numberValue(template, "width");
+    const width = explicitWidth ?? (
       paddingX !== undefined && fontSize !== undefined
         ? paddingX * 2 + estimateTextWidth(labelText, fontSize) + (iconVisible && iconSize !== undefined ? iconSize + (gap ?? 0) : 0)
         : undefined
     );
+    const layoutMode = (stringValue(template, "layoutMode") as "HORIZONTAL" | "VERTICAL" | undefined) ?? "HORIZONTAL";
+    const primaryAxisSizingMode: "AUTO" | "FIXED" = isButton && layoutMode === "HORIZONTAL" && explicitWidth === undefined ? "AUTO" : "FIXED";
     return {
       tuple,
       ...(fill ? { fill } : {}),
@@ -624,7 +628,8 @@ export const planComponentVisuals = (target: TargetSchema, normalized: Normalize
       ...(iconVisible !== undefined ? { iconVisible } : {}),
       ...(iconSize !== undefined ? { iconSize } : {}),
       ...(numberValue(icon, "iconRotation") !== undefined ? { iconRotation: numberValue(icon, "iconRotation") } : {}),
-      layoutMode: (stringValue(template, "layoutMode") as "HORIZONTAL" | "VERTICAL" | undefined) ?? "HORIZONTAL",
+      layoutMode,
+      primaryAxisSizingMode,
       primaryAxisAlignItems: stringValue(template, "primaryAxisAlignItems") ?? "CENTER",
       counterAxisAlignItems: stringValue(template, "counterAxisAlignItems") ?? "CENTER",
     };
@@ -660,6 +665,7 @@ const applyVisualVariant = (component: ComponentNode, label: TextNode | undefine
   if (style.paddingX !== undefined) { frame.paddingLeft = style.paddingX; frame.paddingRight = style.paddingX; }
   if (style.paddingY !== undefined) { frame.paddingTop = style.paddingY; frame.paddingBottom = style.paddingY; }
   if (style.width !== undefined || style.height !== undefined) frame.resize(style.width ?? frame.width, style.height ?? frame.height);
+  frame.primaryAxisSizingMode = style.primaryAxisSizingMode ?? "FIXED";
   if (style.radius !== undefined) frame.cornerRadius = style.radius;
   if (label) {
     if (style.textColor) { const paint = solidPaint(style.textColor); if (paint) label.fills = [paint]; }
@@ -701,7 +707,8 @@ const visualInvariantDiagnostics = (componentSet: ComponentSetNode, styles: Visu
     const style = styleByTuple[tuple.join("\u0000")];
     if (style) {
       if (style.height !== undefined && variant.height !== style.height) diagnostics.push(createDiagnostic("VISUAL_HEIGHT_MISMATCH", `Variant ${variant.name} height ${variant.height} does not match ${style.height}.`));
-      if (style.width !== undefined && variant.width !== style.width) diagnostics.push(createDiagnostic("VISUAL_WIDTH_MISMATCH", `Variant ${variant.name} width ${variant.width} does not match ${style.width}.`));
+      if (style.primaryAxisSizingMode !== undefined && variant.primaryAxisSizingMode !== style.primaryAxisSizingMode) diagnostics.push(createDiagnostic("VISUAL_SIZING_MISMATCH", `Variant ${variant.name} main-axis sizing ${variant.primaryAxisSizingMode} does not match ${style.primaryAxisSizingMode}.`));
+      if (style.primaryAxisSizingMode !== "AUTO" && style.width !== undefined && variant.width !== style.width) diagnostics.push(createDiagnostic("VISUAL_WIDTH_MISMATCH", `Variant ${variant.name} width ${variant.width} does not match ${style.width}.`));
       if (style.layoutMode && variant.layoutMode !== style.layoutMode) diagnostics.push(createDiagnostic("VISUAL_LAYOUT_MISMATCH", `Variant ${variant.name} is not ${style.layoutMode} auto layout.`));
       if (style.gap !== undefined && variant.itemSpacing !== style.gap) diagnostics.push(createDiagnostic("VISUAL_GAP_MISMATCH", `Variant ${variant.name} gap ${variant.itemSpacing} does not match ${style.gap}.`));
     }

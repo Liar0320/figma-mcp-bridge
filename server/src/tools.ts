@@ -548,7 +548,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "set_layout_mode",
-    "Set auto-layout mode.",
+    "Set auto-layout direction and optional main-axis sizing mode.",
     ({ nodeId, ...args }, fileKey) =>
       node.sendWithParams("set_layout_mode", [String(nodeId)], args, fileKey)
   );

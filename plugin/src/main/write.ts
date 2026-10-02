@@ -561,6 +561,7 @@ function validateWriteToolParams(
     case "set_layout_mode":
       getFigmaNodeId(merged.nodeId, "nodeId");
       validateEnum(merged.layoutMode, "layoutMode", ["NONE", "HORIZONTAL", "VERTICAL"]);
+      if (merged.primaryAxisSizingMode !== undefined) validateEnum(merged.primaryAxisSizingMode, "primaryAxisSizingMode", ["AUTO", "FIXED"]);
       return;
     case "set_padding":
       getFigmaNodeId(merged.nodeId, "nodeId");
@@ -765,13 +766,20 @@ function applyCornerRadius(node: SceneNode, cornerRadius: unknown): void {
   );
 }
 
-/** Applies the requested auto-layout mode to supported container nodes. */
-function applyLayoutMode(node: SceneNode, layoutMode: unknown): void {
-  if (layoutMode === undefined) return;
-  if (!("layoutMode" in node)) {
-    fail("UNSUPPORTED_NODE", "layoutMode is not supported for this node");
+/** Applies auto-layout direction and optional main-axis sizing to supported containers. */
+function applyLayoutMode(node: SceneNode, layoutMode: unknown, primaryAxisSizingMode?: unknown): void {
+  if (layoutMode !== undefined) {
+    if (!("layoutMode" in node)) {
+      fail("UNSUPPORTED_NODE", "layoutMode is not supported for this node");
+    }
+    node.layoutMode = getString(layoutMode, "layoutMode") as FrameNode["layoutMode"];
   }
-  node.layoutMode = getString(layoutMode, "layoutMode") as FrameNode["layoutMode"];
+  if (primaryAxisSizingMode !== undefined) {
+    if (!("primaryAxisSizingMode" in node)) {
+      fail("UNSUPPORTED_NODE", "primaryAxisSizingMode is not supported for this node");
+    }
+    node.primaryAxisSizingMode = getString(primaryAxisSizingMode, "primaryAxisSizingMode") as FrameNode["primaryAxisSizingMode"];
+  }
 }
 
 /** Applies auto-layout padding values, defaulting omitted edges to zero. */
@@ -2201,7 +2209,7 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
         await applyTextStyle(node, merged.style);
       });
     case "set_layout_mode":
-      return mutateNode(merged, (node) => applyLayoutMode(node, merged.layoutMode));
+      return mutateNode(merged, (node) => applyLayoutMode(node, merged.layoutMode, merged.primaryAxisSizingMode));
     case "set_padding":
       return mutateNode(merged, (node) => applyPadding(node, merged.padding ?? merged));
     case "set_item_spacing":

@@ -631,6 +631,7 @@ export const toolInputSchemas = {
   set_layout_mode: withFileKey({
     nodeId: figmaNodeId,
     layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]),
+    primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
   }),
   set_padding: withFileKey({
     nodeId: figmaNodeId,

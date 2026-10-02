@@ -304,11 +304,27 @@ async function applyStyleToNode(node: SceneNode, item: ApplyTokenPlanItem): Prom
   if (!item.tokenFigmaId) throw new Error("tokenFigmaId is required");
   await getStyleById(item.tokenFigmaId);
   if (item.property.startsWith("fills[")) {
-    (node as unknown as { fillStyleId: string }).fillStyleId = item.tokenFigmaId;
+    const paintNode = node as SceneNode & {
+      fillStyleId: string;
+      setFillStyleIdAsync?: (styleId: string) => Promise<void>;
+    };
+    if (typeof paintNode.setFillStyleIdAsync === "function") {
+      await paintNode.setFillStyleIdAsync(item.tokenFigmaId);
+    } else {
+      paintNode.fillStyleId = item.tokenFigmaId;
+    }
     return;
   }
   if (item.property.startsWith("strokes[")) {
-    (node as unknown as { strokeStyleId: string }).strokeStyleId = item.tokenFigmaId;
+    const paintNode = node as SceneNode & {
+      strokeStyleId: string;
+      setStrokeStyleIdAsync?: (styleId: string) => Promise<void>;
+    };
+    if (typeof paintNode.setStrokeStyleIdAsync === "function") {
+      await paintNode.setStrokeStyleIdAsync(item.tokenFigmaId);
+    } else {
+      paintNode.strokeStyleId = item.tokenFigmaId;
+    }
     return;
   }
   if (item.property === "typography") {
