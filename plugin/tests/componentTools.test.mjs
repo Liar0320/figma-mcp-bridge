@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeComponentSetNode, validateComponentPlan, createComponentSet, arrowIconGeometry, planVariantGrid } from "../dist-test/src/main/componentTools.js";
+import { normalizeComponentSetNode, validateComponentPlan, createComponentSet, arrowIconGeometry, planVariantGrid, shouldCreateIconNode } from "../dist-test/src/main/componentTools.js";
 
 const buttonTarget = {
   name: "Button",
@@ -11,10 +11,15 @@ const buttonTarget = {
   ],
   properties: [
     { name: "Label", type: "TEXT", defaultValue: "Continue" },
-    { name: "Show Icon", type: "BOOLEAN", defaultValue: true },
   ],
 };
+assert.equal(shouldCreateIconNode("Right", false), true);
+assert.equal(shouldCreateIconNode("Up", false), true);
+assert.equal(shouldCreateIconNode("None", true), false);
+assert.equal(shouldCreateIconNode(undefined, true), true);
+assert.equal(shouldCreateIconNode(undefined, false), false);
 const buttonValidation = validateComponentPlan(buttonTarget);
+assert.deepEqual(buttonValidation.normalized.properties.map((property) => property.name), ["Label"]);
 const { planComponentVisuals } = await import("../dist-test/src/main/componentTools.js");
 const visualPlan = planComponentVisuals(buttonTarget, buttonValidation.normalized);
 assert.equal(visualPlan?.source, "built-in");
@@ -39,6 +44,7 @@ const ghostHoverMedium = tupleVariant(visualPlan, { Type: "Ghost", State: "Hover
 assert.equal(ghostHoverMedium?.stroke, "#6691FF");
 assert.equal(ghostHoverMedium?.textColor, "#6691FF");
 assert.equal(ghostHoverMedium?.iconRotation, 0);
+assert.equal(ghostHoverMedium?.iconVisible, true);
 const textDisabledLargeUp = tupleVariant(visualPlan, { Type: "Text", State: "Disabled", Size: "Large", Icon: "Up" });
 assert.equal(textDisabledLargeUp?.opacity, 0.3);
 assert.equal(textDisabledLargeUp?.iconRotation, 90);

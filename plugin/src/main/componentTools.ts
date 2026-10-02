@@ -562,6 +562,9 @@ export const arrowIconGeometry = (size = 18): { width: number; height: number; p
   const at = (value: number) => Number((value * scale).toFixed(3));
   return { width: size, height: size, path: `M ${at(3)} ${at(9)} L ${at(14)} ${at(9)} M ${at(9)} ${at(4)} L ${at(14)} ${at(9)} L ${at(9)} ${at(14)}` };
 };
+/** Variant dimensions take precedence; retain the legacy visibility-toggle path when Icon is absent. */
+export const shouldCreateIconNode = (iconVariant: string | undefined, hasVisibilityToggle: boolean): boolean =>
+  iconVariant === undefined ? hasVisibilityToggle : iconVariant !== "None";
 
 /** Returns a stable, serializable style plan without reading or mutating Figma. */
 export const planComponentVisuals = (target: TargetSchema, normalized: NormalizedTarget): VisualStylePlan | undefined => {
@@ -783,18 +786,19 @@ export const createComponentSet = async (target: TargetSchema, options?: {
         component.appendChild(label);
       }
       const iconProperty = validation.normalized.properties.find((property) => property.name === "Show Icon" && property.type === "BOOLEAN");
+      const style = styleByTuple[tuple.join("\u0000")];
+      const iconVariant = variantProperties.Icon;
       let icon: VectorNode | undefined;
-      if (iconProperty) {
+      if (shouldCreateIconNode(iconVariant, Boolean(iconProperty))) {
         icon = figma.createVector();
         created.push(icon);
         icon.name = "Icon";
         const geometry = arrowIconGeometry(18);
         icon.vectorPaths = [{ windingRule: "NONZERO", data: geometry.path }];
         icon.resize(geometry.width, geometry.height);
-        icon.visible = iconProperty.defaultValue !== false;
+        icon.visible = iconProperty?.defaultValue !== false;
         component.appendChild(icon);
       }
-      const style = styleByTuple[tuple.join("\u0000")];
       if (style) applyVisualVariant(component, label, icon, style);
       const placement = gridByTuple[tuple.join("\u0000")];
       if (placement) { component.x = placement.x; component.y = placement.y; }
