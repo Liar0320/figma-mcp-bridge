@@ -33,6 +33,7 @@ type PluginStatus = {
   fileKey: string;
   fileName: string;
   selectionCount: number;
+  buildId: string | null;
 };
 
 const buildWsUrl = (status: PluginStatus): string => {
@@ -48,7 +49,8 @@ export default function App() {
   const [status, setStatus] = useState<PluginStatus>({
     fileKey: "pending",
     fileName: "Unknown file",
-    selectionCount: 0
+    selectionCount: 0,
+    buildId: null,
   });
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
@@ -80,6 +82,7 @@ export default function App() {
     };
 
     window.addEventListener("message", handleMessage);
+    parent.postMessage({ pluginMessage: { type: "ui-ready" } }, "*");
     return () => {
       window.removeEventListener("message", handleMessage);
     };
@@ -98,7 +101,6 @@ export default function App() {
 
       ws.onopen = () => {
         setConnected(true);
-        parent.postMessage({ pluginMessage: { type: "ui-ready" } }, "*");
       };
 
       ws.onclose = () => {
@@ -141,6 +143,12 @@ export default function App() {
   }, [status.fileKey, status.fileName]);
 
 
+  const buildLabel = status.buildId === null
+    ? "Checking build…"
+    : status.buildId === __PLUGIN_BUILD_ID__
+      ? status.buildId
+      : "Mismatch — rebuild & reload";
+
 
   return (
     <div className="container">
@@ -152,6 +160,14 @@ export default function App() {
         <div className="info-row">
           <span className="info-label">Selection:</span>
           <span className="info-value">{status.selectionCount} node(s)</span>
+        </div>
+        <div className="info-row">
+          <span className="info-label">Version:</span>
+          <span className="info-value">v{__PLUGIN_VERSION__}</span>
+        </div>
+        <div className="info-row build-row">
+          <span className="info-label">Build:</span>
+          <span className="info-value build-id" title={buildLabel}>{buildLabel}</span>
         </div>
       </div>
 

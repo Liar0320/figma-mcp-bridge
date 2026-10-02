@@ -169,6 +169,8 @@ If `bun` is not available, the plugin can also be built with npm:
 cd plugin && npm install && npm run build
 ```
 
+The plugin UI shows the version from `plugin/package.json` and a build ID generated for each coordinated UI/main build. After `bun run build` (or `npm run build`), reload the Figma development plugin and compare the Build field; an unchanged ID means the new bundle has not been loaded. For continuous rebuilds, run `bun run dev` (or `npm run dev`) and reload after the build finishes. If the UI and main bundles do not match, the UI shows a build mismatch instead of claiming they are current. The package version changes only when explicitly updated.
+
 #### 4. Add the MCP server to your favourite AI tool
 
 For local development, add the following to your AI tool's MCP config:
