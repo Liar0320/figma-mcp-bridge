@@ -163,6 +163,12 @@ const batchOperation = z.object({
   ref: z.string().min(1).optional(),
 });
 
+const batchMutationCompact = z
+  .boolean()
+  .optional()
+  .default(false)
+  .describe("Return only execution summary, created node IDs, and refs instead of full per-step node payloads.");
+
 const fileKeyField = z
   .string()
   .min(1)
@@ -677,6 +683,7 @@ export const toolInputSchemas = {
   batch_mutation: withFileKey({
     operations: z.array(batchOperation).min(1).max(100),
     failureMode: z.enum(["best-effort", "atomic"]).optional().default("best-effort"),
+    compact: batchMutationCompact,
   }),
 } as const;
 

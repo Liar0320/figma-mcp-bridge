@@ -28,7 +28,7 @@ type MutationResult = {
   name: string;
   parentId?: string;
   key?: string;
-  node: SerializedNode;
+  node?: SerializedNode;
 };
 
 type FindNodeResult = Omit<MutationResult, "node"> & {
@@ -895,14 +895,14 @@ async function applyTextContent(node: TextNode, characters: unknown): Promise<vo
 }
 
 /** Builds the normalized mutation payload returned by write operations. */
-function toMutationResult(node: SceneNode): MutationResult {
+function toMutationResult(node: SceneNode, includeNode = true): MutationResult {
   return {
     nodeId: node.id,
     type: node.type,
     name: node.name,
     parentId: node.parent && node.parent.type !== "DOCUMENT" ? node.parent.id : undefined,
     key: getPluginKey(node),
-    node: serializeNode(node),
+    ...(includeNode ? { node: serializeNode(node) } : {}),
   };
 }
 
@@ -912,8 +912,6 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
   const node = figma.createFrame();
   try {
     setName(node, params?.name, "Frame");
-    applyPosition(node, params);
-    applySize(node, params);
     applyFills(node, params?.fills);
     applyStrokes(node, params?.strokes);
     applyCornerRadius(node, params?.cornerRadius);
@@ -922,7 +920,9 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
     applyItemSpacing(node, params?.itemSpacing);
     setPluginData(node, getOptionalString(params?.key));
     parent.appendChild(node);
-    return toMutationResult(node);
+    applyPosition(node, params);
+    applySize(node, params);
+    return toMutationResult(node, params?.compact !== true);
   } catch (error) {
     node.remove();
     throw error;
@@ -935,8 +935,6 @@ async function createComponent(params: RequestParams): Promise<MutationResult> {
   const node = figma.createComponent();
   try {
     setName(node, params?.name, "Component");
-    applyPosition(node, params);
-    applySize(node, params);
     applyFills(node, params?.fills);
     applyStrokes(node, params?.strokes);
     applyCornerRadius(node, params?.cornerRadius);
@@ -945,7 +943,9 @@ async function createComponent(params: RequestParams): Promise<MutationResult> {
     applyItemSpacing(node, params?.itemSpacing);
     setPluginData(node, getOptionalString(params?.key));
     parent.appendChild(node);
-    return toMutationResult(node);
+    applyPosition(node, params);
+    applySize(node, params);
+    return toMutationResult(node, params?.compact !== true);
   } catch (error) {
     node.remove();
     throw error;
@@ -968,10 +968,11 @@ async function createInstance(params: RequestParams): Promise<MutationResult> {
   const node = (source as ComponentNode).createInstance();
   try {
     setName(node, params?.name, `${source.name} Instance`);
-    applyPosition(node, params);
     setPluginData(node, getOptionalString(params?.key));
+    // Attach before positioning so x/y are interpreted in the target parent's coordinate space.
     parent.appendChild(node);
-    return toMutationResult(node);
+    applyPosition(node, params);
+    return toMutationResult(node, params?.compact !== true);
   } catch (error) {
     node.remove();
     throw error;
@@ -1332,14 +1333,14 @@ async function createText(params: RequestParams): Promise<MutationResult> {
   const node = figma.createText();
   try {
     setName(node, params?.name, "Text");
-    applyPosition(node, params);
-    applySize(node, params);
     await applyTextStyle(node, params?.style);
     await applyTextContent(node, params?.characters);
     applyFills(node, params?.fills);
     setPluginData(node, getOptionalString(params?.key));
     parent.appendChild(node);
-    return toMutationResult(node);
+    applyPosition(node, params);
+    applySize(node, params);
+    return toMutationResult(node, params?.compact !== true);
   } catch (error) {
     node.remove();
     throw error;
@@ -1352,14 +1353,14 @@ async function createRectangle(params: RequestParams): Promise<MutationResult> {
   const node = figma.createRectangle();
   try {
     setName(node, params?.name, "Rectangle");
-    applyPosition(node, params);
-    applySize(node, params);
     applyFills(node, params?.fills);
     applyStrokes(node, params?.strokes);
     applyCornerRadius(node, params?.cornerRadius);
     setPluginData(node, getOptionalString(params?.key));
     parent.appendChild(node);
-    return toMutationResult(node);
+    applyPosition(node, params);
+    applySize(node, params);
+    return toMutationResult(node, params?.compact !== true);
   } catch (error) {
     node.remove();
     throw error;
@@ -1894,7 +1895,7 @@ async function mutateNode(
 ): Promise<MutationResult> {
   const node = await getNodeById(getString(params?.nodeId, "nodeId"));
   await mutator(node);
-  return toMutationResult(node);
+  return toMutationResult(node, params?.compact !== true);
 }
 
 /** Apply safe native dimension operations on a component set. */
@@ -2281,6 +2282,7 @@ export async function handleWriteRequest(
   const results: unknown[] = [];
   const createdNodeIds: string[] = [];
   const failureMode = params?.failureMode === "atomic" ? "atomic" : "best-effort";
+  const compact = params?.compact === true;
 
   for (let index = 0; index < params.operations.length; index++) {
     try {
@@ -2288,15 +2290,16 @@ export async function handleWriteRequest(
       const resolvedNodeId = resolveRef(operation.nodeId, context);
       const resolvedNodeIds = operation.nodeIds?.map((id) => resolveRef(id, context) ?? id);
       const resolvedParams = resolveParams(operation.params, context);
+      const effectiveParams = compact ? { ...(resolvedParams ?? {}), compact: true } : resolvedParams;
       validateWriteToolParams(
         operation.type,
         resolvedNodeIds ?? (resolvedNodeId ? [resolvedNodeId] : undefined),
-        resolvedParams
+        effectiveParams
       );
       const result = await executeWrite(
         operation.type,
         resolvedNodeIds ?? (resolvedNodeId ? [resolvedNodeId] : undefined),
-        resolvedParams
+        effectiveParams
       );
       results.push(result);
 
@@ -2323,19 +2326,21 @@ export async function handleWriteRequest(
       }
       return {
         executedCount: results.length,
+        ...(compact ? { createdNodeIds } : {}),
         createdRefs: Object.fromEntries(context.refs),
         failedStepIndex: index,
         failure: toMutationError(error),
         rollback: { attempted: failureMode === "atomic", completed: unrevertedNodeIds.length === 0, removedNodeIds, unrevertedNodeIds },
-        results,
+        ...(compact ? {} : { results }),
       };
     }
   }
 
   return {
     executedCount: results.length,
+    ...(compact ? { createdNodeIds } : {}),
     createdRefs: Object.fromEntries(context.refs),
-    results,
+    ...(compact ? {} : { results }),
   };
 }
 

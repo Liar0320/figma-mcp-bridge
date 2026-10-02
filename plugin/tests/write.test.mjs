@@ -447,6 +447,45 @@ async function testCreateInstanceFromLocalComponent() {
   assert.equal(instance.y, 80);
 }
 
+/** Verifies batched instances use target-parent coordinates after attachment. */
+async function testBatchCreateInstancesUseParentCoordinates() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Input Variant",
+  });
+  const guide = await handleWriteRequest("create_frame", undefined, {
+    name: "Guide",
+    x: 1000,
+    y: 1000,
+    width: 800,
+    height: 600,
+  });
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    compact: true,
+    failureMode: "atomic",
+    operations: [
+      {
+        type: "create_instance",
+        ref: "tmp:instance",
+        params: {
+          componentId: component.nodeId,
+          parentId: guide.nodeId,
+          name: "Input / Default",
+          x: 80,
+          y: 160,
+        },
+      },
+    ],
+  });
+
+  const instance = await globalThis.figma.getNodeByIdAsync(result.createdRefs["tmp:instance"]);
+  assert.equal(instance.parent.id, guide.nodeId);
+  assert.equal(instance.x, 80);
+  assert.equal(instance.y, 160);
+}
+
 /** Verifies create_instance reports a clear NOT_FOUND error for missing components. */
 async function testCreateInstanceMissingComponentReportsNotFound() {
   globalThis.figma = createMockFigma();
@@ -951,7 +990,28 @@ async function testLargeOrderedBatch() {
   assert.equal(lastRect.cornerRadius, 6);
 }
 
-/** Verifies batch execution stops cleanly and reports partial progress on failure. */
+/** Verifies compact batch execution returns IDs without full per-step results. */
+async function testCompactBatchMutation() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    compact: true,
+    operations: [
+      { type: "create_frame", ref: "tmp:root", params: { name: "Compact Root" } },
+      { type: "create_rectangle", ref: "tmp:rect", params: { parentId: "tmp:root", name: "Compact Rect" } },
+    ],
+  });
+
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.results, undefined);
+  assert.equal(result.createdNodeIds.length, 2);
+  assert.ok(result.createdRefs["tmp:root"]);
+  assert.ok(result.createdRefs["tmp:rect"]);
+  const compactRoot = await globalThis.figma.getNodeByIdAsync(result.createdRefs["tmp:root"]);
+  assert.equal(compactRoot.name, "Compact Root");
+}
+
+
 async function testPartialFailure() {
   globalThis.figma = createMockFigma();
 
@@ -1717,6 +1777,7 @@ async function runTests() {
     ["testSetNodeNameMissingNodeReportsNotFound", testSetNodeNameMissingNodeReportsNotFound],
     ["testCreateComponentCreatesNamedComponent", testCreateComponentCreatesNamedComponent],
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
+    ["testBatchCreateInstancesUseParentCoordinates", testBatchCreateInstancesUseParentCoordinates],
     ["testBatchSetLayoutModeSetsPrimaryAxisSizingMode", testBatchSetLayoutModeSetsPrimaryAxisSizingMode],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
@@ -1744,6 +1805,7 @@ async function runTests() {
     ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
+    ["testCompactBatchMutation", testCompactBatchMutation],
     ["testPartialFailure", testPartialFailure],
     ["testBatchValidationFailure", testBatchValidationFailure],
     ["testFindNodesJsonQuery", testFindNodesJsonQuery],
