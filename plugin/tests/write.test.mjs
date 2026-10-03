@@ -116,6 +116,13 @@ function createMockFigma() {
         type: "FRAME",
         children: [],
         layoutMode: "NONE",
+        layoutSizingHorizontal: "FIXED",
+        layoutSizingVertical: "FIXED",
+        layoutPositioning: "AUTO",
+        minWidth: null,
+        maxWidth: null,
+        minHeight: null,
+        maxHeight: null,
         layoutWrap: "NO_WRAP",
         itemSpacing: 0,
         primaryAxisAlignItems: "MIN",
@@ -144,6 +151,13 @@ function createMockFigma() {
     Object.assign(node, {
       children: [],
       layoutMode: "NONE",
+      layoutSizingHorizontal: "FIXED",
+      layoutSizingVertical: "FIXED",
+      layoutPositioning: "AUTO",
+      minWidth: null,
+      maxWidth: null,
+      minHeight: null,
+      maxHeight: null,
       layoutWrap: "NO_WRAP",
       itemSpacing: 0,
       primaryAxisAlignItems: "MIN",
@@ -312,8 +326,13 @@ function createMockFigma() {
         textAlignHorizontal: "LEFT",
         textAlignVertical: "TOP",
         textAutoResize: "NONE",
-        lineHeight: { unit: "AUTO" },
-        letterSpacing: { unit: "PIXELS", value: 0 },
+        layoutSizingHorizontal: "FIXED",
+        layoutSizingVertical: "HUG",
+        layoutPositioning: "AUTO",
+        minWidth: null,
+        maxWidth: null,
+        minHeight: null,
+        maxHeight: null,
         getRangeAllFontNames() {
           return [{ family: "Inter", style: "Regular" }];
         },
@@ -364,6 +383,31 @@ async function assertMutationError(promise, code, messagePattern, verify) {
 }
 
 
+/** Verifies single writes stay compact by default and explicit false restores snapshots. */
+async function testCompactDefaultsAndExplicitFullResults() {
+  globalThis.figma = createMockFigma();
+  const compact = await handleWriteRequest("create_frame", undefined, { name: "Compact" });
+  assert.equal(compact.node, undefined);
+  const full = await handleWriteRequest("create_frame", undefined, { name: "Full", compact: false });
+  assert.ok(full.node);
+}
+
+/** Verifies atomic rollback removes creations but never removes an existing mutation target. */
+async function testAtomicRollbackRemovesOnlyCreatedNodes() {
+  globalThis.figma = createMockFigma();
+  const existing = await handleWriteRequest("create_frame", undefined, { name: "Existing" });
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    failureMode: "atomic",
+    operations: [
+      { type: "set_node_name", nodeId: existing.nodeId, params: { name: "Changed" } },
+      { type: "create_frame", ref: "tmp:new", params: { name: "Created" } },
+      { type: "set_corner_radius", nodeId: "tmp:missing", params: { cornerRadius: 4 } },
+    ],
+  });
+  assert.deepEqual(result.rollback.removedNodeIds, [result.createdRefs["tmp:new"]]);
+  assert.equal((await globalThis.figma.getNodeByIdAsync(existing.nodeId)).name, "Changed");
+}
+
 /** Verifies create_component creates a first-class Figma Component with shared create fields. */
 async function testCreateComponentCreatesNamedComponent() {
   globalThis.figma = createMockFigma();
@@ -380,6 +424,7 @@ async function testCreateComponentCreatesNamedComponent() {
     layoutMode: "HORIZONTAL",
     itemSpacing: 8,
     padding: { top: 10, right: 16, bottom: 10, left: 16 },
+    compact: false,
   });
 
   assert.equal(result.type, "COMPONENT");
@@ -445,6 +490,45 @@ async function testCreateInstanceFromLocalComponent() {
   assert.equal(instance.mainComponent.id, component.nodeId);
   assert.equal(instance.x, 200);
   assert.equal(instance.y, 80);
+}
+
+/** Verifies batched instances use target-parent coordinates after attachment. */
+async function testBatchCreateInstancesUseParentCoordinates() {
+  globalThis.figma = createMockFigma();
+
+  const component = await handleWriteRequest("create_component", undefined, {
+    name: "Input Variant",
+  });
+  const guide = await handleWriteRequest("create_frame", undefined, {
+    name: "Guide",
+    x: 1000,
+    y: 1000,
+    width: 800,
+    height: 600,
+  });
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    compact: true,
+    failureMode: "atomic",
+    operations: [
+      {
+        type: "create_instance",
+        ref: "tmp:instance",
+        params: {
+          componentId: component.nodeId,
+          parentId: guide.nodeId,
+          name: "Input / Default",
+          x: 80,
+          y: 160,
+        },
+      },
+    ],
+  });
+
+  const instance = await globalThis.figma.getNodeByIdAsync(result.createdRefs["tmp:instance"]);
+  assert.equal(instance.parent.id, guide.nodeId);
+  assert.equal(instance.x, 80);
+  assert.equal(instance.y, 160);
 }
 
 /** Verifies create_instance reports a clear NOT_FOUND error for missing components. */
@@ -744,6 +828,7 @@ async function testBatchCombineAsVariantsSupportsTmpRefs() {
   globalThis.figma = createMockFigma();
 
   const result = await handleWriteRequest("batch_mutation", undefined, {
+    compact: false,
     operations: [
       {
         type: "create_component",
@@ -776,7 +861,7 @@ async function testBatchCombineAsVariantsSupportsTmpRefs() {
 async function testBatchCreateComponentAndInstanceSupportsTmpRef() {
   globalThis.figma = createMockFigma();
 
-  const result = await handleWriteRequest("batch_mutation", undefined, {
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false,
     operations: [
       {
         type: "create_component",
@@ -807,6 +892,7 @@ async function testSetNodeNameRenamesExistingNode() {
   });
   const result = await handleWriteRequest("set_node_name", [frame.nodeId], {
     name: "ServiceHighlight / Shipping",
+    compact: false,
   });
 
   assert.equal(result.nodeId, frame.nodeId);
@@ -866,7 +952,7 @@ async function testSetNodeNameMissingNodeReportsNotFound() {
 async function testBatchSetNodeNameSupportsTmpRef() {
   globalThis.figma = createMockFigma();
 
-  const result = await handleWriteRequest("batch_mutation", undefined, {
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false,
     operations: [
       {
         type: "create_frame",
@@ -933,7 +1019,7 @@ async function testLargeOrderedBatch() {
     })),
   ];
 
-  const result = await handleWriteRequest("batch_mutation", undefined, { operations });
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false, operations });
 
   assert.equal(result.executedCount, operations.length);
   assert.equal(result.results.length, operations.length);
@@ -951,7 +1037,28 @@ async function testLargeOrderedBatch() {
   assert.equal(lastRect.cornerRadius, 6);
 }
 
-/** Verifies batch execution stops cleanly and reports partial progress on failure. */
+/** Verifies compact batch execution returns IDs without full per-step results. */
+async function testCompactBatchMutation() {
+  globalThis.figma = createMockFigma();
+
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    compact: true,
+    operations: [
+      { type: "create_frame", ref: "tmp:root", params: { name: "Compact Root" } },
+      { type: "create_rectangle", ref: "tmp:rect", params: { parentId: "tmp:root", name: "Compact Rect" } },
+    ],
+  });
+
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.results, undefined);
+  assert.equal(result.createdNodeIds.length, 2);
+  assert.ok(result.createdRefs["tmp:root"]);
+  assert.ok(result.createdRefs["tmp:rect"]);
+  const compactRoot = await globalThis.figma.getNodeByIdAsync(result.createdRefs["tmp:root"]);
+  assert.equal(compactRoot.name, "Compact Root");
+}
+
+
 async function testPartialFailure() {
   globalThis.figma = createMockFigma();
 
@@ -984,7 +1091,7 @@ async function testPartialFailure() {
     },
   ];
 
-  const result = await handleWriteRequest("batch_mutation", undefined, { operations });
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false, operations });
 
   assert.equal(result.executedCount, 81);
   assert.equal(result.failedStepIndex, 81);
@@ -1003,7 +1110,7 @@ async function testPartialFailure() {
 async function testBatchValidationFailure() {
   globalThis.figma = createMockFigma();
 
-  const result = await handleWriteRequest("batch_mutation", undefined, {
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false,
     operations: [
       {
         type: "create_frame",
@@ -1496,7 +1603,7 @@ async function testBatchCreateFailureDoesNotLeakNodes() {
     name: "Modal Root",
   });
 
-  const result = await handleWriteRequest("batch_mutation", undefined, {
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false,
     operations: [
       {
         type: "create_frame",
@@ -1542,7 +1649,7 @@ async function testBatchCreateFailureDoesNotLeakNodes() {
 async function testBatchSetStrokesSupportsTmpRef() {
   globalThis.figma = createMockFigma();
 
-  const result = await handleWriteRequest("batch_mutation", undefined, {
+  const result = await handleWriteRequest("batch_mutation", undefined, { compact: false,
     operations: [
       {
         type: "create_frame",
@@ -1711,12 +1818,15 @@ async function testSetVariantPropertiesRejectsStandaloneComponent() {
 /** Runs the write-tool test cases and reports a simple pass/fail summary. */
 async function runTests() {
   const tests = [
+    ["testCompactDefaultsAndExplicitFullResults", testCompactDefaultsAndExplicitFullResults],
+    ["testAtomicRollbackRemovesOnlyCreatedNodes", testAtomicRollbackRemovesOnlyCreatedNodes],
     ["testSetNodeNameRenamesExistingNode", testSetNodeNameRenamesExistingNode],
     ["testRenameNodeAliasRenamesExistingNode", testRenameNodeAliasRenamesExistingNode],
     ["testSetNodeNameRejectsWhitespaceOnlyName", testSetNodeNameRejectsWhitespaceOnlyName],
     ["testSetNodeNameMissingNodeReportsNotFound", testSetNodeNameMissingNodeReportsNotFound],
     ["testCreateComponentCreatesNamedComponent", testCreateComponentCreatesNamedComponent],
     ["testCreateInstanceFromLocalComponent", testCreateInstanceFromLocalComponent],
+    ["testBatchCreateInstancesUseParentCoordinates", testBatchCreateInstancesUseParentCoordinates],
     ["testBatchSetLayoutModeSetsPrimaryAxisSizingMode", testBatchSetLayoutModeSetsPrimaryAxisSizingMode],
     ["testCreateInstanceMissingComponentReportsNotFound", testCreateInstanceMissingComponentReportsNotFound],
     ["testCreateInstanceRejectsNonComponentSource", testCreateInstanceRejectsNonComponentSource],
@@ -1744,6 +1854,7 @@ async function runTests() {
     ["testBatchCreateComponentAndInstanceSupportsTmpRef", testBatchCreateComponentAndInstanceSupportsTmpRef],
     ["testBatchSetNodeNameSupportsTmpRef", testBatchSetNodeNameSupportsTmpRef],
     ["testLargeOrderedBatch", testLargeOrderedBatch],
+    ["testCompactBatchMutation", testCompactBatchMutation],
     ["testPartialFailure", testPartialFailure],
     ["testBatchValidationFailure", testBatchValidationFailure],
     ["testFindNodesJsonQuery", testFindNodesJsonQuery],

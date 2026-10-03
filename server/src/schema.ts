@@ -19,6 +19,25 @@ const solidPaint = z.object({
   opacity: z.number().min(0).max(1).optional(),
 });
 
+const childLayoutFields = {
+  layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  minWidth: z.number().finite().nonnegative().nullable().optional(),
+  maxWidth: z.number().finite().nonnegative().nullable().optional(),
+  minHeight: z.number().finite().nonnegative().nullable().optional(),
+  maxHeight: z.number().finite().nonnegative().nullable().optional(),
+};
+
+const containerLayoutFields = {
+  layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+  primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  counterAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+  primaryAxisAlignItems: z.enum(["MIN", "CENTER", "MAX", "SPACE_BETWEEN"]).optional(),
+  counterAxisAlignItems: z.enum(["MIN", "CENTER", "MAX", "BASELINE"]).optional(),
+  layoutWrap: z.enum(["NO_WRAP", "WRAP"]).optional(),
+};
+
 const createNodeBase = z.object({
   parentId: figmaNodeId.optional(),
   name: z.string().min(1).optional(),
@@ -27,6 +46,7 @@ const createNodeBase = z.object({
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
   key: z.string().min(1).optional(),
+  ...childLayoutFields,
 });
 
 const textStyleSchema = z.object({
@@ -163,6 +183,12 @@ const batchOperation = z.object({
   ref: z.string().min(1).optional(),
 });
 
+const batchMutationCompact = z
+  .boolean()
+  .optional()
+  .default(true)
+  .describe("Default true: return execution counts, refs, actual created IDs and failure/cleanup details only. Set false to include per-step results.");
+
 const fileKeyField = z
   .string()
   .min(1)
@@ -238,7 +264,105 @@ const componentReliabilityFields = {
   baseline: z.string().min(1).optional(),
   journalId: z.string().min(1).optional(),
 };
+const sceneProps = createNodeBase.omit({ parentId: true, key: true }).extend({
+  ...containerLayoutFields,
+  fills: z.array(solidPaint).optional(),
+  strokes: z.array(solidPaint).optional(),
+  cornerRadius: z.number().nonnegative().optional(),
+  clipsContent: z.boolean().optional(),
+  itemSpacing: z.number().finite().optional(),
+  padding: paddingSchema.optional(),
+  characters: z.string().optional(),
+  style: textStyleSchema.optional(),
+  componentId: figmaNodeId.optional(),
+  properties: componentPropertyMap.optional(),
+}).strict();
+
+type SceneNodeInput = {
+  ref: string;
+  type: "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE";
+  props?: z.infer<typeof sceneProps>;
+  children?: SceneNodeInput[];
+};
+
+const sceneNode: z.ZodType<SceneNodeInput> = z.lazy(() => z.object({
+  ref: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+  type: z.enum(["FRAME", "TEXT", "RECTANGLE", "INSTANCE"]),
+  props: sceneProps.optional(),
+  children: z.array(sceneNode).max(100).optional(),
+}).strict());
+
+// Bound the recursive input before Zod descends into it.
+const sceneNodes = z.preprocess((value, ctx) => {
+  if (!Array.isArray(value)) return value;
+  const pending = value.map((node) => ({ node, depth: 1 }));
+  const refs = new Set<string>();
+  let count = 0;
+  while (pending.length) {
+    const { node, depth } = pending.pop()!;
+    if (++count > 100 || depth > 16) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Scenes are limited to 100 nodes and 16 levels" });
+      return z.NEVER;
+    }
+    if (!node || typeof node !== "object" || Array.isArray(node)) continue;
+    if (typeof node.ref === "string") {
+      if (refs.has(node.ref)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate scene ref: ${node.ref}` });
+        return z.NEVER;
+      }
+      refs.add(node.ref);
+    }
+    if (Array.isArray(node.children)) {
+      if (node.type !== "FRAME" && node.children.length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only FRAME scene nodes accept children" });
+        return z.NEVER;
+      }
+      if (pending.length + count + node.children.length > 100) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Scenes are limited to 100 nodes" });
+        return z.NEVER;
+      }
+      for (const child of node.children) pending.push({ node: child, depth: depth + 1 });
+    }
+  }
+  return value;
+}, z.array(sceneNode).min(1).max(100));
+
+const measurementStyle = textStyleSchema.pick({
+  fontFamily: true,
+  fontStyle: true,
+  fontSize: true,
+  lineHeight: true,
+  letterSpacing: true,
+  textDecoration: true,
+}).strict();
+
+const layoutIssueCode = z.enum([
+  "OUT_OF_BOUNDS", "CLIPPED_CONTENT", "TEXT_TRUNCATION", "TEXT_OVERLAP",
+  "SMALL_TOUCH_TARGET", "LOW_CONTRAST",
+]);
+
 export const toolInputSchemas = {
+  create_scene: withFileKey({
+    parentId: figmaNodeId.optional(),
+    nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children."),
+    dryRun: z.boolean().optional().default(true).describe("Preflight the entire scene without creating nodes. Only false creates persistent nodes."),
+  }).strict(),
+  measure_text: withFileKey({
+    items: z.array(z.object({
+      ref: z.string().min(1).optional(),
+      characters: z.string(),
+      width: z.number().finite().positive().optional(),
+      style: measurementStyle.optional(),
+    }).strict()).min(1).max(50),
+  }).strict(),
+  validate_layout: withFileKey({
+    rootIds: z.array(figmaNodeId).min(1).max(20),
+    maxNodes: z.number().int().min(1).max(2000).optional(),
+    maxIssues: z.number().int().min(1).max(500).optional(),
+    minTouchTarget: z.number().finite().positive().optional(),
+    interactiveNodeIds: z.array(figmaNodeId).max(2000).optional(),
+    ignore: z.array(z.object({ nodeId: figmaNodeId, code: layoutIssueCode }).strict()).max(2000).optional(),
+  }).strict(),
   create_component_set: withFileKey(createComponentSetOptions),
   inspect_component_set: withFileKey({
     componentSetId: figmaNodeId.describe("COMPONENT_SET node ID to inspect"),
@@ -442,7 +566,7 @@ export const toolInputSchemas = {
             .string()
             .min(1)
             .describe(
-              "Output file path (relative paths resolve from the MCP server current working directory)",
+              "Path inside the MCP server working directory (relative paths resolve there). Absolute paths outside that directory and existing output files are rejected.",
             ),
           format: exportFormat.optional(),
           scale: z.number().optional(),
@@ -505,7 +629,8 @@ export const toolInputSchemas = {
     fills: z.array(solidPaint).optional(),
     strokes: z.array(solidPaint).optional(),
     cornerRadius: z.number().nonnegative().optional(),
-    layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+    ...containerLayoutFields,
+    clipsContent: z.boolean().optional(),
     itemSpacing: z.number().optional(),
     padding: paddingSchema.optional(),
   }),
@@ -514,7 +639,8 @@ export const toolInputSchemas = {
     fills: z.array(solidPaint).optional(),
     strokes: z.array(solidPaint).optional(),
     cornerRadius: z.number().nonnegative().optional(),
-    layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]).optional(),
+    ...containerLayoutFields,
+    clipsContent: z.boolean().optional(),
     itemSpacing: z.number().optional(),
     padding: paddingSchema.optional(),
   }),
@@ -527,6 +653,10 @@ export const toolInputSchemas = {
     x: z.number().optional(),
     y: z.number().optional(),
     key: z.string().min(1).optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    ...childLayoutFields,
+    ...containerLayoutFields,
   }),
   swap_instance_component: withFileKey({
     instanceId: figmaNodeId.describe("The current-page INSTANCE node to replace"),
@@ -630,8 +760,8 @@ export const toolInputSchemas = {
   }),
   set_layout_mode: withFileKey({
     nodeId: figmaNodeId,
-    layoutMode: z.enum(["NONE", "HORIZONTAL", "VERTICAL"]),
-    primaryAxisSizingMode: z.enum(["AUTO", "FIXED"]).optional(),
+    ...containerLayoutFields,
+    ...childLayoutFields,
   }),
   set_padding: withFileKey({
     nodeId: figmaNodeId,
@@ -677,6 +807,7 @@ export const toolInputSchemas = {
   batch_mutation: withFileKey({
     operations: z.array(batchOperation).min(1).max(100),
     failureMode: z.enum(["best-effort", "atomic"]).optional().default("best-effort"),
+    compact: batchMutationCompact,
   }),
 } as const;
 
@@ -691,6 +822,9 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  create_scene: (_nodeIds, params) => ({ ...params }),
+  measure_text: (_nodeIds, params) => ({ ...params }),
+  validate_layout: (_nodeIds, params) => ({ ...params }),
   inspect_component_set: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),
   validate_component_plan: (_nodeIds, params) => ({ ...params }),
   plan_component_migration: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),

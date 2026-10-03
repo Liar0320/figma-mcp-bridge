@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/build.mjs --watch",
     "build": "node scripts/build.mjs",
-    "test": "tsc -p tsconfig.test.json && node scripts/fix-test-imports.mjs && node tests/write.test.mjs && node tests/serializer.test.mjs && node tests/tokenUsage.test.mjs && node tests/tokens.test.mjs && node tests/components.test.mjs && node tests/componentTools.test.mjs && node tests/componentMigration.test.mjs && node tests/componentReliability.test.mjs && node tests/tokenAudit.test.mjs && node tests/tokenPropose.test.mjs && node tests/tokenCreate.test.mjs && node tests/tokenApply.test.mjs && node tests/tokenExport.test.mjs",
+    "test": "tsc -p tsconfig.test.json && node scripts/fix-test-imports.mjs && node tests/write.test.mjs && node tests/scene.test.mjs && node tests/textMeasurement.test.mjs && node tests/layoutDiagnostics.test.mjs && node tests/serializer.test.mjs && node tests/tokenUsage.test.mjs && node tests/tokens.test.mjs && node tests/components.test.mjs && node tests/componentTools.test.mjs && node tests/componentMigration.test.mjs && node tests/componentReliability.test.mjs && node tests/tokenAudit.test.mjs && node tests/tokenPropose.test.mjs && node tests/tokenCreate.test.mjs && node tests/tokenApply.test.mjs && node tests/tokenExport.test.mjs",
     "component:smoke": "node ../scripts/component-smoke.mjs",
     "test:visual-compare": "node ../scripts/visual-compare.test.mjs"
   },

@@ -129,10 +129,11 @@ export class Bridge {
         request.params = params;
       }
 
+      const timeoutMs = requestType === "batch_mutation" || requestType === "create_scene" ? 120_000 : 30_000;
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error("Request timed out"));
-      }, 30_000);
+      }, timeoutMs);
 
       this.pending.set(requestId, { resolve, reject, timeout });
 

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { validateLayout } from '../dist-test/src/main/layoutDiagnostics.js';
+
+const page = { id: '0:1', type: 'PAGE', visible: true };
+const node = (id, type, x, y, width, height, extra = {}) => ({ id, type, visible: true, parent: page, absoluteBoundingBox: { x, y, width, height }, ...extra });
+const frame = node('1:1', 'FRAME', 0, 0, 100, 100, { clipsContent: true, children: [] });
+frame.parent = page; page.children = [frame];
+const text = node('1:2', 'TEXT', 90, 10, 30, 20, { parent: frame, textAutoResize: 'NONE', fills: [{ type: 'SOLID', color: { r: 0.2, g: 0.2, b: 0.2 } }] });
+const bg = node('1:3', 'RECTANGLE', 0, 0, 100, 100, { parent: frame, fills: [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }] });
+const trunc = node('1:4', 'TEXT', 10, 10, 20, 10, { parent: frame, textAutoResize: 'TRUNCATE', fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }] });
+frame.children = [bg, text, trunc];
+const map = new Map([['1:1', frame], ['1:2', text], ['1:3', bg], ['1:4', trunc]]);
+globalThis.figma = { currentPage: page, getNodeByIdAsync: async (id) => map.get(id) };
+
+let r = await validateLayout({ rootIds: ['1:1'], interactiveNodeIds: ['1:2'] });
+assert.equal(r.scannedNodes, 4);
+assert.ok(r.issues.some(i => i.code === 'OUT_OF_BOUNDS' && i.nodeId === '1:2'));
+assert.ok(r.issues.some(i => i.code === 'CLIPPED_CONTENT' && i.nodeId === '1:2'));
+assert.ok(r.issues.some(i => i.code === 'TEXT_TRUNCATION' && i.nodeId === '1:4'));
+assert.ok(r.issues.some(i => i.code === 'SMALL_TOUCH_TARGET' && i.nodeId === '1:2'));
+assert.ok(r.issues.some(i => i.code === 'LOW_CONTRAST' && i.nodeId === '1:2'));
+r = await validateLayout({ rootIds: ['1:1'], ignore: [{ nodeId: '1:2', code: 'OUT_OF_BOUNDS' }], maxIssues: 1 });
+assert.equal(r.complete, false);
+assert.ok(!r.issues.some(i => i.code === 'OUT_OF_BOUNDS'));
+r = await validateLayout({ rootIds: ['1:1'], maxNodes: 2 });
+assert.equal(r.complete, false);
+assert.equal(r.scannedNodes, 2);
+const unsupported = node('1:5', 'TEXT', 0, 0, 10, 10, { parent: frame, textAutoResize: 'NONE', fills: [{ type: 'GRADIENT_LINEAR' }] });
+map.set('1:5', unsupported); frame.children.push(unsupported);
+r = await validateLayout({ rootIds: ['1:5'] });
+assert.ok(r.limitations.length > 0);
+console.log('layout diagnostics tests passed');
