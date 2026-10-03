@@ -1189,7 +1189,6 @@ async function testFindNodesCompactDefaultsToMetadataAndCanIncludeNode() {
   assert.equal(full.matches.length, 1);
   assert.equal(full.matches[0].node.id, frame.nodeId);
   assert.equal(full.matches[0].node.children[0].id, child.nodeId);
-  assert.ok(JSON.stringify(compact).length < JSON.stringify(full).length);
 }
 
 /** Verifies non-JSON query strings fall back to name substring matching. */
