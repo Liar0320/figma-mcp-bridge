@@ -690,6 +690,9 @@ export function validateWriteToolParams(
       if (params?.includeHidden !== undefined && typeof params.includeHidden !== "boolean") {
         fail("INVALID_INPUT", "includeHidden must be a boolean");
       }
+      if (params?.compact !== undefined && typeof params.compact !== "boolean") {
+        fail("INVALID_INPUT", "compact must be a boolean");
+      }
       return;
     case "delete_node":
       getFigmaNodeId(merged.nodeId, "nodeId");
@@ -1549,7 +1552,7 @@ function getNodePath(node: BaseNode): string[] {
   return names;
 }
 
-/** Builds the enriched payload returned for find_nodes matches. */
+/** Builds the full payload returned for find_nodes matches when compact=false. */
 function toFindNodeResult(node: SceneNode): FindNodeResult {
   const page = getNodePage(node);
   return {
@@ -1560,7 +1563,7 @@ function toFindNodeResult(node: SceneNode): FindNodeResult {
   };
 }
 
-/** Builds minimal find_nodes metadata without deep node serialization. */
+/** Builds compact find_nodes metadata without deep node serialization. */
 function toMinimalFindNodeResult(node: SceneNode): FindNodeResult {
   const page = getNodePage(node);
   return {
@@ -1944,6 +1947,7 @@ async function findNodes(params: RequestParams): Promise<unknown> {
     ...(allPagesStats ?? {}),
   };
   const serializedMatches: FindNodeResult[] = [];
+  const compact = params?.compact !== false;
   const serializeWarnings: FindNodesWarning[] = [];
   for (const node of limited) {
     if (
@@ -1962,10 +1966,14 @@ async function findNodes(params: RequestParams): Promise<unknown> {
       }
       break;
     }
-    const serialized = toFindNodeResultSafe(node);
-    serializedMatches.push(serialized.result);
-    if (serialized.warning) {
-      serializeWarnings.push(serialized.warning);
+    if (compact) {
+      serializedMatches.push(toMinimalFindNodeResult(node));
+    } else {
+      const serialized = toFindNodeResultSafe(node);
+      serializedMatches.push(serialized.result);
+      if (serialized.warning) {
+        serializeWarnings.push(serialized.warning);
+      }
     }
   }
   summary.returned = serializedMatches.length;

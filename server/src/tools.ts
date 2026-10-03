@@ -534,7 +534,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "find_nodes",
-    "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Results include pageId, pageName, and path context.",
+    "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Returns compact match metadata by default; compact=false includes serialized node trees.",
     (args, fileKey) => node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
   registerWriteTool("batch_mutation", "Execute up to 100 writes in order. Compact receipts are the default; compact=false includes per-step results. Atomic failure removes only nodes created by this batch, not prior mutations to existing nodes.", (args, fileKey) =>
