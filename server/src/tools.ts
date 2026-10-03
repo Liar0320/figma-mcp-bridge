@@ -99,6 +99,28 @@ type WriteToolName = keyof Pick<
 /** Registers all read and write MCP tools exposed by the bridge server. */
 export function registerTools(server: McpServer, node: Node): void {
   server.tool(
+    "create_scene",
+    "Preflight and create a nested editable Frame/Text/Rectangle/Instance scene with native Auto Layout. Defaults to dry-run; dryRun=false creates nodes. Validates fonts, refs and component dependencies first; failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels.",
+    toolInputSchemas.create_scene.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("create_scene", undefined, params, fileKey))
+  );
+  server.tool(
+    "measure_text",
+    "Measure up to 50 text samples using Figma's native fonts and layout. Temporarily creates text nodes and removes them on success or failure, preserving selection. Returns measured width, height and loaded font; does not claim exact line counts or glyph fallback detection.",
+    toolInputSchemas.measure_text.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("measure_text", undefined, params, fileKey))
+  );
+  server.tool(
+    "validate_layout",
+    "Read-only bounded layout diagnostics for explicit current-page rootIds. Reports bounds, clipping, observable text truncation, sibling text overlap, explicit interactive target size and determinable solid-color contrast. Unsupported checks are reported as limitations, not a clean bill of health.",
+    toolInputSchemas.validate_layout.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("validate_layout", undefined, params, fileKey))
+  );
+
+  server.tool(
     "list_files",
     "List Figma files currently connected to the bridge plugin. Use fileKey from this list when multiple files are connected.",
     async (): Promise<ToolResult> => {
@@ -386,7 +408,7 @@ export function registerTools(server: McpServer, node: Node): void {
 
   server.tool(
     "save_screenshots",
-    "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64).",
+    "Export screenshots to files inside the MCP server working directory. Relative outputPath resolves there; absolute paths outside it and existing output files are rejected. Returns metadata only (no base64).",
     toolInputSchemas.save_screenshots.shape,
     async ({ items, format, scale, fileKey }): Promise<ToolResult> => {
       try {
@@ -501,7 +523,7 @@ export function registerTools(server: McpServer, node: Node): void {
     "Create or update component property definitions and optionally apply values to an instance using native Figma APIs.",
     (args, fileKey) => node.sendWithParams("bind_component_properties", undefined, args, fileKey)
   );
-  registerWriteTool("create_text", "Create a text node.", (args, fileKey) =>
+  registerWriteTool("create_text", "Create text with independent dimensions. Width-only defaults to fixed-width, auto-height wrapping; explicit auto-resize modes must be compatible with the supplied dimensions.", (args, fileKey) =>
     node.sendWithParams("create_text", undefined, args, fileKey)
   );
   registerWriteTool("create_rectangle", "Create a rectangle.", (args, fileKey) =>
@@ -515,7 +537,7 @@ export function registerTools(server: McpServer, node: Node): void {
     "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Results include pageId, pageName, and path context.",
     (args, fileKey) => node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
-  registerWriteTool("batch_mutation", "Execute write operations in order.", (args, fileKey) =>
+  registerWriteTool("batch_mutation", "Execute up to 100 writes in order. Compact receipts are the default; compact=false includes per-step results. Atomic failure removes only nodes created by this batch, not prior mutations to existing nodes.", (args, fileKey) =>
     node.sendWithParams("batch_mutation", undefined, args, fileKey)
   );
 
@@ -548,7 +570,7 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   registerWriteTool(
     "set_layout_mode",
-    "Set auto-layout direction and optional main-axis sizing mode.",
+    "Set native container or child Auto Layout properties, including axis alignment, wrap, FIXED/HUG/FILL sizing and min/max dimensions. layoutMode is optional for child sizing; incompatible contexts fail explicitly.",
     ({ nodeId, ...args }, fileKey) =>
       node.sendWithParams("set_layout_mode", [String(nodeId)], args, fileKey)
   );

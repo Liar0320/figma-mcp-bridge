@@ -23,8 +23,14 @@ import type { TargetSchema } from "./componentTools";
 import { migrateComponentSet, repairComponentSet, buildReconciliationPlan, verifyPostflight } from "./componentMigration";
 import { beginOperation, finishOperation, failOperation, listOperations, getOperation, markRolledBack, checkpointOperation, recoverOperations } from "./operationJournal";
 import { chunkMatrix, createScreenshotReport, componentError, serializeComponentError } from "./componentReliability";
+import { createScene } from "./scene";
+import { measureText } from "./textMeasurement";
+import { validateLayout } from "./layoutDiagnostics";
 
 type RequestType =
+  | "create_scene"
+  | "measure_text"
+  | "validate_layout"
   | "inspect_component_set"
   | "validate_component_plan"
   | "plan_component_migration"
@@ -137,7 +143,7 @@ type ServerRequest = {
     chunkSize?: number;
     journalId?: string;
     baseline?: string;
-    operations?: Array<{ type?: string }>;
+    operations?: Array<{ type?: string; ref?: string }>;
   };
 };
 
@@ -170,6 +176,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_component_matrix",
   "get_component_screenshot_report",
   "get_operation_journal",
+  "validate_layout",
 ]);
 
 const pluginSessionId = `session-${Date.now().toString(36)}-${Math.random()
@@ -636,6 +643,24 @@ const handleRequest = async (
           },
         };
       }
+      case "create_scene":
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await createScene(request.params as Record<string, unknown> | undefined),
+        };
+      case "measure_text":
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await measureText(request.params as Record<string, unknown> | undefined),
+        };
+      case "validate_layout":
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await validateLayout(request.params as Record<string, unknown> | undefined),
+        };
       case "migrate_component_set":
       case "repair_component_set":
       case "clone_component_set":
@@ -674,13 +699,22 @@ const handleRequest = async (
           const journal = beginOperation(request.type, request.requestId);
           try {
             const data = await handleWriteRequest(request.type, request.nodeIds, request.params as Record<string, unknown> | undefined);
-            if (request.type === "batch_mutation" && data && typeof data === "object" && Array.isArray((data as { results?: unknown[] }).results)) {
-              for (const [step, result] of (data as { results: unknown[] }).results.entries()) {
-                const nodeIds = result && typeof result === "object" && typeof (result as { nodeId?: unknown }).nodeId === "string" ? [(result as { nodeId: string }).nodeId] : [];
-                checkpointOperation(journal, step, request.params?.operations?.[step]?.type ?? "batch_step", nodeIds);
+            const batch = request.type === "batch_mutation" && data && typeof data === "object"
+              ? data as { executedCount: number; createdRefs: Record<string, string>; results?: Array<{ nodeId?: string }>; failure?: unknown }
+              : undefined;
+            if (batch) {
+              for (let step = 0; step < batch.executedCount; step++) {
+                const operation = request.params?.operations?.[step];
+                const nodeId = batch.results?.[step]?.nodeId ?? (operation?.ref ? batch.createdRefs[operation.ref] : undefined);
+                checkpointOperation(journal, step, operation?.type ?? "batch_step", nodeId ? [nodeId] : []);
               }
             }
-            finishOperation(journal, data);
+            if (batch?.failure) {
+              journal.result = data;
+              failOperation(journal, batch.failure);
+            } else {
+              finishOperation(journal, data);
+            }
             return {
               type: request.type,
               requestId: request.requestId,

@@ -358,8 +358,80 @@ function validateCreateNodeBase(params: Record<string, unknown>): void {
   getOptionalNonEmptyString(params.key, "key");
 }
 
+const LAYOUT_CONTAINER_KEYS = [
+  "layoutMode",
+  "primaryAxisSizingMode",
+  "counterAxisSizingMode",
+  "primaryAxisAlignItems",
+  "counterAxisAlignItems",
+  "layoutWrap",
+  "clipsContent",
+] as const;
+
+const LAYOUT_KEYS = [
+  ...LAYOUT_CONTAINER_KEYS,
+  "layoutSizingHorizontal",
+  "layoutSizingVertical",
+  "layoutPositioning",
+  "minWidth",
+  "maxWidth",
+  "minHeight",
+  "maxHeight",
+] as const;
+
+/** Validates flat native auto-layout and sizing properties shared by write tools. */
+function validateLayoutProperties(params: Record<string, unknown>, container: boolean): void {
+  if (params.layoutMode !== undefined) {
+    validateEnum(params.layoutMode, "layoutMode", ["NONE", "HORIZONTAL", "VERTICAL"]);
+    if (!container) fail("UNSUPPORTED_NODE", "layoutMode is only supported for container nodes");
+  }
+  if (params.primaryAxisSizingMode !== undefined) {
+    validateEnum(params.primaryAxisSizingMode, "primaryAxisSizingMode", ["AUTO", "FIXED"]);
+    if (!container) fail("UNSUPPORTED_NODE", "primaryAxisSizingMode is only supported for container nodes");
+  }
+  if (params.counterAxisSizingMode !== undefined) {
+    validateEnum(params.counterAxisSizingMode, "counterAxisSizingMode", ["AUTO", "FIXED"]);
+    if (!container) fail("UNSUPPORTED_NODE", "counterAxisSizingMode is only supported for container nodes");
+  }
+  if (params.primaryAxisAlignItems !== undefined) {
+    validateEnum(params.primaryAxisAlignItems, "primaryAxisAlignItems", ["MIN", "CENTER", "MAX", "SPACE_BETWEEN"]);
+    if (!container) fail("UNSUPPORTED_NODE", "primaryAxisAlignItems is only supported for container nodes");
+  }
+  if (params.counterAxisAlignItems !== undefined) {
+    validateEnum(params.counterAxisAlignItems, "counterAxisAlignItems", ["MIN", "CENTER", "MAX", "BASELINE"]);
+    if (!container) fail("UNSUPPORTED_NODE", "counterAxisAlignItems is only supported for container nodes");
+  }
+  if (params.layoutWrap !== undefined) {
+    validateEnum(params.layoutWrap, "layoutWrap", ["NO_WRAP", "WRAP"]);
+    if (!container) fail("UNSUPPORTED_NODE", "layoutWrap is only supported for container nodes");
+  }
+  if (params.clipsContent !== undefined) {
+    if (typeof params.clipsContent !== "boolean") fail("INVALID_INPUT", "clipsContent must be a boolean");
+    if (!container) fail("UNSUPPORTED_NODE", "clipsContent is only supported for container nodes");
+  }
+  for (const key of ["layoutSizingHorizontal", "layoutSizingVertical"] as const) {
+    if (params[key] === undefined) continue;
+    validateEnum(params[key], key, ["FIXED", "HUG", "FILL"]);
+    if (params[key] === "HUG" && !container && !params.__textNode) {
+      fail("UNSUPPORTED_NODE", `${key}=HUG is only valid for auto-layout containers or text`);
+    }
+  }
+  if (params.layoutPositioning !== undefined) {
+    validateEnum(params.layoutPositioning, "layoutPositioning", ["AUTO", "ABSOLUTE"]);
+  }
+  for (const key of ["minWidth", "maxWidth", "minHeight", "maxHeight"] as const) {
+    if (params[key] !== undefined && params[key] !== null) getNonnegativeNumber(params[key], key);
+  }
+  if (typeof params.minWidth === "number" && typeof params.maxWidth === "number" && params.minWidth > params.maxWidth) {
+    fail("INVALID_INPUT", "minWidth must not exceed maxWidth");
+  }
+  if (typeof params.minHeight === "number" && typeof params.maxHeight === "number" && params.minHeight > params.maxHeight) {
+    fail("INVALID_INPUT", "minHeight must not exceed maxHeight");
+  }
+}
+
 /** Validates resolved write params before executeWrite mutates the document. */
-function validateWriteToolParams(
+export function validateWriteToolParams(
   type: string,
   nodeIds: string[] | undefined,
   params: RequestParams
@@ -415,14 +487,10 @@ function validateWriteToolParams(
       if (params) validateCreateNodeBase(params);
       if (params?.fills !== undefined) toSolidPaints(params.fills);
       if (params?.strokes !== undefined) toSolidPaints(params.strokes);
-      if (params?.cornerRadius !== undefined) {
-        getNonnegativeNumber(params.cornerRadius, "cornerRadius");
-      }
-      if (params?.layoutMode !== undefined) {
-        validateEnum(params.layoutMode, "layoutMode", ["NONE", "HORIZONTAL", "VERTICAL"]);
-      }
+      if (params?.cornerRadius !== undefined) getNonnegativeNumber(params.cornerRadius, "cornerRadius");
       if (params?.itemSpacing !== undefined) getNumber(params.itemSpacing, "itemSpacing");
       if (params?.padding !== undefined) validatePaddingObject(params.padding, "padding");
+      if (params) validateLayoutProperties(params, true);
       return;
     case "create_instance":
       getFigmaNodeId(params?.componentId, "componentId");
@@ -430,7 +498,10 @@ function validateWriteToolParams(
       getOptionalNonEmptyString(params?.name, "name");
       if (params?.x !== undefined) getNumber(params.x, "x");
       if (params?.y !== undefined) getNumber(params.y, "y");
+      if (params?.width !== undefined) getPositiveNumber(params.width, "width");
+      if (params?.height !== undefined) getPositiveNumber(params.height, "height");
       getOptionalNonEmptyString(params?.key, "key");
+      if (params) validateLayoutProperties(params, false);
       return;
     case "swap_instance_component":
       getFigmaNodeId(params?.instanceId, "instanceId");
@@ -510,14 +581,14 @@ function validateWriteToolParams(
       }
       if (params?.style !== undefined) validateTextStyle(params.style);
       if (params?.fills !== undefined) toSolidPaints(params.fills);
+      if (params) validateLayoutProperties({ ...params, __textNode: true }, false);
       return;
     case "create_rectangle":
       if (params) validateCreateNodeBase(params);
       if (params?.fills !== undefined) toSolidPaints(params.fills);
       if (params?.strokes !== undefined) toSolidPaints(params.strokes);
-      if (params?.cornerRadius !== undefined) {
-        getNonnegativeNumber(params.cornerRadius, "cornerRadius");
-      }
+      if (params?.cornerRadius !== undefined) getNonnegativeNumber(params.cornerRadius, "cornerRadius");
+      if (params) validateLayoutProperties(params, false);
       return;
     case "append_children":
       getFigmaNodeId(params?.parentId, "parentId");
@@ -560,8 +631,10 @@ function validateWriteToolParams(
       return;
     case "set_layout_mode":
       getFigmaNodeId(merged.nodeId, "nodeId");
-      validateEnum(merged.layoutMode, "layoutMode", ["NONE", "HORIZONTAL", "VERTICAL"]);
-      if (merged.primaryAxisSizingMode !== undefined) validateEnum(merged.primaryAxisSizingMode, "primaryAxisSizingMode", ["AUTO", "FIXED"]);
+      if (merged.layoutMode === undefined && !LAYOUT_KEYS.some((key) => key !== "layoutMode" && merged[key] !== undefined)) {
+        fail("INVALID_INPUT", "at least one layout property is required");
+      }
+      validateLayoutProperties(merged, true);
       return;
     case "set_padding":
       getFigmaNodeId(merged.nodeId, "nodeId");
@@ -718,22 +791,19 @@ function setName(node: SceneNode, name: unknown, fallback: string): void {
   node.name = getOptionalString(name) ?? fallback;
 }
 
-/** Applies x and y coordinates when both are provided. */
+/** Applies x and y coordinates independently when provided. */
 function applyPosition(node: SceneNode, params: RequestParams): void {
-  if (params?.x !== undefined && params?.y !== undefined) {
-    node.x = getNumber(params.x, "x");
-    node.y = getNumber(params.y, "y");
-  }
+  if (params?.x !== undefined) node.x = getNumber(params.x, "x");
+  if (params?.y !== undefined) node.y = getNumber(params.y, "y");
 }
 
-/** Applies width and height when the node supports resize. */
+/** Applies width and height independently when provided. */
 function applySize(node: SceneNode, params: RequestParams): void {
-  if (params?.width !== undefined && params?.height !== undefined) {
-    if (!("resize" in node)) {
-      fail("UNSUPPORTED_NODE", "resize is not supported for this node");
-    }
-    node.resize(getNumber(params.width, "width"), getNumber(params.height, "height"));
-  }
+  if (params?.width === undefined && params?.height === undefined) return;
+  if (!("resize" in node)) fail("UNSUPPORTED_NODE", "resize is not supported for this node");
+  const width = params.width === undefined ? node.width : getPositiveNumber(params.width, "width");
+  const height = params.height === undefined ? node.height : getPositiveNumber(params.height, "height");
+  node.resize(width, height);
 }
 
 /** Applies solid fill paints to nodes that expose fills. */
@@ -779,6 +849,26 @@ function applyLayoutMode(node: SceneNode, layoutMode: unknown, primaryAxisSizing
       fail("UNSUPPORTED_NODE", "primaryAxisSizingMode is not supported for this node");
     }
     node.primaryAxisSizingMode = getString(primaryAxisSizingMode, "primaryAxisSizingMode") as FrameNode["primaryAxisSizingMode"];
+  }
+}
+/** Applies flat native auto-layout and sizing properties after node attachment. */
+function applyLayoutProperties(node: SceneNode, params: RequestParams): void {
+  if (!params) return;
+  const containerKeys = ["layoutMode", "primaryAxisSizingMode", "counterAxisSizingMode", "primaryAxisAlignItems", "counterAxisAlignItems", "layoutWrap", "clipsContent"] as const;
+  const isContainer = "children" in node;
+  for (const key of containerKeys) {
+    if (params[key] === undefined) continue;
+    if (!isContainer) fail("UNSUPPORTED_NODE", `${key} is only supported for container nodes`);
+    (node as SceneNode & Record<string, unknown>)[key] = params[key];
+  }
+  for (const key of ["layoutSizingHorizontal", "layoutSizingVertical", "layoutPositioning"] as const) {
+    if (params[key] === undefined) continue;
+    (node as SceneNode & Record<string, unknown>)[key] = params[key];
+  }
+  for (const key of ["minWidth", "maxWidth", "minHeight", "maxHeight"] as const) {
+    if (params[key] !== undefined && params[key] !== null) {
+      (node as unknown as Record<string, number | null>)[key] = params[key] as number;
+    }
   }
 }
 
@@ -922,7 +1012,8 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
     parent.appendChild(node);
     applyPosition(node, params);
     applySize(node, params);
-    return toMutationResult(node, params?.compact !== true);
+    applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
     throw error;
@@ -945,7 +1036,8 @@ async function createComponent(params: RequestParams): Promise<MutationResult> {
     parent.appendChild(node);
     applyPosition(node, params);
     applySize(node, params);
-    return toMutationResult(node, params?.compact !== true);
+    applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
     throw error;
@@ -972,7 +1064,9 @@ async function createInstance(params: RequestParams): Promise<MutationResult> {
     // Attach before positioning so x/y are interpreted in the target parent's coordinate space.
     parent.appendChild(node);
     applyPosition(node, params);
-    return toMutationResult(node, params?.compact !== true);
+    applySize(node, params);
+    applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
     throw error;
@@ -1340,7 +1434,11 @@ async function createText(params: RequestParams): Promise<MutationResult> {
     parent.appendChild(node);
     applyPosition(node, params);
     applySize(node, params);
-    return toMutationResult(node, params?.compact !== true);
+    if (params?.width !== undefined && params?.height === undefined && (!isObject(params.style) || params.style.textAutoResize === undefined)) {
+      node.textAutoResize = "HEIGHT";
+    }
+    applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
     throw error;
@@ -1360,7 +1458,8 @@ async function createRectangle(params: RequestParams): Promise<MutationResult> {
     parent.appendChild(node);
     applyPosition(node, params);
     applySize(node, params);
-    return toMutationResult(node, params?.compact !== true);
+    applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
     throw error;
@@ -1895,7 +1994,7 @@ async function mutateNode(
 ): Promise<MutationResult> {
   const node = await getNodeById(getString(params?.nodeId, "nodeId"));
   await mutator(node);
-  return toMutationResult(node, params?.compact !== true);
+  return toMutationResult(node, params?.compact === false);
 }
 
 /** Apply safe native dimension operations on a component set. */
@@ -2210,7 +2309,10 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
         await applyTextStyle(node, merged.style);
       });
     case "set_layout_mode":
-      return mutateNode(merged, (node) => applyLayoutMode(node, merged.layoutMode, merged.primaryAxisSizingMode));
+      return mutateNode(merged, (node) => {
+        applyLayoutMode(node, merged.layoutMode, merged.primaryAxisSizingMode);
+        applyLayoutProperties(node, merged);
+      });
     case "set_padding":
       return mutateNode(merged, (node) => applyPadding(node, merged.padding ?? merged));
     case "set_item_spacing":
@@ -2263,6 +2365,8 @@ function resolveParams(
   );
 }
 
+const CREATION_WRITE_TYPES = new Set(["create_frame", "create_component", "create_text", "create_rectangle", "create_instance"]);
+
 /** Handles both single write requests and ordered batch mutations from the server. */
 export async function handleWriteRequest(
   type: string,
@@ -2303,7 +2407,7 @@ export async function handleWriteRequest(
       );
       results.push(result);
 
-      if (isObject(result) && typeof result.nodeId === "string") createdNodeIds.push(result.nodeId);
+      if (isObject(result) && typeof result.nodeId === "string" && CREATION_WRITE_TYPES.has(operation.type)) createdNodeIds.push(result.nodeId);
 
       if (isObject(result) && typeof result.nodeId === "string" && operation.ref) {
         context.refs.set(operation.ref, result.nodeId);
