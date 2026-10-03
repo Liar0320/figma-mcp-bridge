@@ -2,8 +2,72 @@ import { handleWriteRequest, validateWriteToolParams } from "./write";
 
 type NodeType = "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE";
 type SceneSpec = { ref: string; type: NodeType; props: Record<string, unknown>; children: SceneSpec[] };
+type FontDescriptor = { family: string; style: string };
+type FontResolutionWarning = {
+  code: "FONT_STYLE_FALLBACK";
+  requested: FontDescriptor;
+  resolved: FontDescriptor;
+  attemptedCandidates: FontDescriptor[];
+};
+export class FontResolutionError extends Error {
+  readonly requested: FontDescriptor;
+  readonly attemptedCandidates: FontDescriptor[];
+
+  constructor(requested: FontDescriptor, attemptedCandidates: FontDescriptor[]) {
+    super(`Unable to load font ${requested.family} ${requested.style}`);
+    this.name = "FontResolutionError";
+    this.requested = requested;
+    this.attemptedCandidates = attemptedCandidates;
+  }
+}
 const REF_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const LAYOUT = ["layoutMode","layoutSizingHorizontal","layoutSizingVertical","primaryAxisSizingMode","counterAxisSizingMode","primaryAxisAlignItems","counterAxisAlignItems","layoutWrap","layoutPositioning","minWidth","maxWidth","minHeight","maxHeight"];
+const FONT_STYLE_ALIASES: Record<string, readonly string[]> = {
+  SemiBold: ["Semi Bold", "Bold", "Regular"],
+  "Semi Bold": ["Semi Bold", "Bold", "Regular"],
+  ExtraBold: ["Extra Bold", "Bold", "Regular"],
+  "Extra Bold": ["Extra Bold", "Bold", "Regular"],
+  UltraLight: ["Ultra Light", "Light", "Regular"],
+  "Ultra Light": ["Ultra Light", "Light", "Regular"],
+};
+
+function fontKey(font: FontDescriptor): string {
+  return `${font.family}\0${font.style}`;
+}
+
+export function normalizeFontStyle(style: string): string {
+  return style.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+export function fontCandidates(requested: FontDescriptor): FontDescriptor[] {
+  const styles = FONT_STYLE_ALIASES[requested.style] ??
+    FONT_STYLE_ALIASES[normalizeFontStyle(requested.style)] ??
+    [requested.style];
+  const candidates: FontDescriptor[] = [];
+  for (const style of [requested.style, normalizeFontStyle(requested.style), ...styles]) {
+    const candidate = { family: requested.family, style };
+    if (!candidates.some((entry) => fontKey(entry) === fontKey(candidate))) candidates.push(candidate);
+  }
+  return candidates;
+}
+
+export async function resolveFontDescriptor(
+  requested: FontDescriptor,
+  load: (font: FontDescriptor) => Promise<void> = (font) => figma.loadFontAsync(font),
+): Promise<{ font: FontDescriptor; attemptedCandidates: FontDescriptor[] }> {
+  const attemptedCandidates: FontDescriptor[] = [];
+  for (const candidate of fontCandidates(requested)) {
+    attemptedCandidates.push(candidate);
+    try {
+      await load(candidate);
+      return { font: candidate, attemptedCandidates };
+    } catch {
+      // Continue only through the explicit candidates for this known alias.
+    }
+  }
+  throw new FontResolutionError(requested, attemptedCandidates);
+}
+
 const SIZE_KEYS = ["layoutSizingHorizontal","layoutSizingVertical","primaryAxisSizingMode","counterAxisSizingMode","minWidth","maxWidth","minHeight","maxHeight"];
 const CONTAINER = ["name","x","y","width","height","fills","strokes","cornerRadius","clipsContent","padding","itemSpacing",...LAYOUT];
 const ALLOWED: Record<NodeType,string[]> = { FRAME: CONTAINER, TEXT:["name","x","y","width","height","characters","style","fills",...LAYOUT], RECTANGLE:["name","x","y","width","height","fills","strokes","cornerRadius",...LAYOUT], INSTANCE:["name","x","y","width","height","componentId","properties",...LAYOUT] };
@@ -60,22 +124,71 @@ async function preflight(roots:SceneSpec[], parentId?:string) {
     if (pageOf(p)!==figma.currentPage) fail("parentId must be on current page", "INVALID_PARENT");
   }
   normalized.forEach(n=>validateLayoutDeps(n));
-  const fonts=new Map<string,{family:string;style:string}>(); const all:SceneSpec[]=[];
-  const visit=(n:SceneSpec)=>{ all.push(n); if(n.type==="TEXT"){const st=isObj(n.props.style)?n.props.style:{}; const family=typeof st.fontFamily==="string"?st.fontFamily:"Inter"; const style=typeof st.fontStyle==="string"?st.fontStyle:"Regular"; fonts.set(`${family}\0${style}`,{family,style});} n.children.forEach(visit)}; normalized.forEach(visit);
+  const fonts = new Map<string, FontDescriptor>();
+  const all: SceneSpec[] = [];
+  const visit = (n: SceneSpec) => {
+    all.push(n);
+    if (n.type === "TEXT") {
+      const st = isObj(n.props.style) ? n.props.style : {};
+      const family = typeof st.fontFamily === "string" ? st.fontFamily : "Inter";
+      const style = typeof st.fontStyle === "string" ? st.fontStyle : "Regular";
+      fonts.set(`${family}\0${style}`, { family, style });
+    }
+    n.children.forEach(visit);
+  };
+  normalized.forEach(visit);
   for (const n of all) {
-    validateWriteToolParams(writeType(n.type), undefined, n.type==="INSTANCE"?{...n.props,componentId:n.props.componentId}:{...n.props});
-    if (n.type==="INSTANCE") {
-      const id=n.props.componentId; if(typeof id!=="string"||!/^\d+:\d+$/.test(id)) fail(`${n.ref}.props.componentId is required`);
-      const source:any=await figma.getNodeByIdAsync(id); if(!source||source.type!=="COMPONENT") fail(`${n.ref}.componentId must reference a COMPONENT`,"INVALID_COMPONENT");
-      if (n.props.properties!==undefined) {
-        if(!isObj(n.props.properties)) fail(`${n.ref}.properties must be an object`);
-        const defs=source.componentPropertyDefinitions||{};
-        for(const [name,val] of Object.entries(n.props.properties)) { const def=defs[name]; if(!def) fail(`Unknown component property ${name}`); const kind=def.type; if(kind==="BOOLEAN" && typeof val!=="boolean") fail(`Property ${name} must be boolean`); if(kind!=="BOOLEAN" && typeof val!=="string") fail(`Property ${name} must be string`); }
+    validateWriteToolParams(writeType(n.type), undefined, n.type === "INSTANCE" ? { ...n.props, componentId: n.props.componentId } : { ...n.props });
+    if (n.type === "INSTANCE") {
+      const id = n.props.componentId;
+      if (typeof id !== "string" || !/^\d+:\d+$/.test(id)) fail(`${n.ref}.props.componentId is required`);
+      const source: any = await figma.getNodeByIdAsync(id);
+      if (!source || source.type !== "COMPONENT") fail(`${n.ref}.componentId must reference a COMPONENT`, "INVALID_COMPONENT");
+      if (n.props.properties !== undefined) {
+        if (!isObj(n.props.properties)) fail(`${n.ref}.properties must be an object`);
+        const defs = source.componentPropertyDefinitions || {};
+        for (const [name, val] of Object.entries(n.props.properties)) {
+          const def = defs[name];
+          if (!def) fail(`Unknown component property ${name}`);
+          const kind = def.type;
+          if (kind === "BOOLEAN" && typeof val !== "boolean") fail(`Property ${name} must be boolean`);
+          if (kind !== "BOOLEAN" && typeof val !== "string") fail(`Property ${name} must be string`);
+        }
       }
     }
   }
-  for(const f of fonts.values()){try{await figma.loadFontAsync(f)}catch{fail(`Unable to load font ${f.family} ${f.style}`,"FONT_LOAD_FAILED")}}
-  return {normalized,all,fonts:[...fonts.values()]};
+  const resolvedFonts = new Map<string, FontDescriptor>();
+  const warnings: FontResolutionWarning[] = [];
+  for (const requested of fonts.values()) {
+    try {
+      const resolution = await resolveFontDescriptor(requested);
+      resolvedFonts.set(fontKey(requested), resolution.font);
+      if (fontKey(requested) !== fontKey(resolution.font)) {
+        warnings.push({ code: "FONT_STYLE_FALLBACK", requested, resolved: resolution.font, attemptedCandidates: resolution.attemptedCandidates });
+      }
+    } catch (error) {
+      if (error instanceof FontResolutionError) {
+        fail(`Unable to load font ${requested.family} ${requested.style}`, "FONT_LOAD_FAILED", {
+          requested: error.requested,
+          attemptedCandidates: error.attemptedCandidates,
+        });
+      }
+      throw error;
+    }
+  }
+  for (const n of all) {
+    if (n.type !== "TEXT") continue;
+    const style = isObj(n.props.style) ? n.props.style : {};
+    const requested = {
+      family: typeof style.fontFamily === "string" ? style.fontFamily : "Inter",
+      style: typeof style.fontStyle === "string" ? style.fontStyle : "Regular",
+    };
+    const resolved = resolvedFonts.get(fontKey(requested));
+    if (resolved && (style.fontFamily !== undefined || style.fontStyle !== undefined)) {
+      n.props.style = { ...style, fontFamily: resolved.family, fontStyle: resolved.style };
+    }
+  }
+  return { normalized, all, fonts: [...fonts.values()], warnings };
 }
 
 function splitProps(props:Record<string,unknown>){ const initial={...props}, deferred:Record<string,unknown>={}; for(const k of SIZE_KEYS) if(k in initial){deferred[k]=initial[k];delete initial[k]} return [initial,deferred] as const; }
@@ -88,11 +201,11 @@ export async function createScene(params:Record<string,unknown>|undefined):Promi
   if(params.parentId!==undefined&&typeof params.parentId!=="string") fail("parentId must be a string");
   if(!Array.isArray(params.nodes)||params.nodes.length===0) fail("nodes must be a non-empty array");
   const pre=await preflight(params.nodes as SceneSpec[],params.parentId as string|undefined); const dryRun=params.dryRun!==false;
-  if(dryRun) return {dryRun:true,nodeCount:pre.all.length,rootNodeIds:[],createdNodeIds:[],refs:pre.all.map(n=>({ref:n.ref,type:n.type})),fonts:pre.fonts};
+  if(dryRun) return {dryRun:true,nodeCount:pre.all.length,rootNodeIds:[],createdNodeIds:[],refs:pre.all.map(n=>({ref:n.ref,type:n.type})),fonts:pre.fonts,warnings:pre.warnings};
   const refs:Record<string,string>={}, created:string[]=[];
   try {
     const create=async(n:SceneSpec,parent:string|undefined)=>{ const [initial,deferred]=splitProps(n.props); initial.parentId=parent; if(n.type==="INSTANCE") delete initial.properties; const result:any=await handleWriteRequest(writeType(n.type),undefined,{...initial,compact:true}); if(!result||typeof result.nodeId!=="string") fail(`Creation failed for ${n.ref}`); refs[n.ref]=result.nodeId; created.push(result.nodeId); for(const c of n.children) await create(c,result.nodeId); if(Object.keys(deferred).length) await handleWriteRequest("set_layout_mode",[result.nodeId],{...deferred,compact:true}); if(n.type==="INSTANCE"&&isObj(n.props.properties)) await handleWriteRequest("set_component_properties",undefined,{instanceId:result.nodeId,properties:n.props.properties,compact:true}); };
     for(const n of pre.normalized) await create(n,params.parentId as string|undefined);
-    return {dryRun:false,nodeCount:pre.all.length,rootNodeIds:pre.normalized.map(n=>refs[n.ref]),createdNodeIds:created,refs};
+    return {dryRun:false,nodeCount:pre.all.length,rootNodeIds:pre.normalized.map(n=>refs[n.ref]),createdNodeIds:created,refs,warnings:pre.warnings};
   } catch(error){ const attempted=[...created], removed:string[]=[], failed:string[]=[]; for(const id of [...created].reverse()){ try{ await handleWriteRequest("delete_node",[id],{nodeId:id,compact:true}); removed.push(id); }catch{ failed.push(id); } } return errorWithCleanup(error,attempted,removed,failed); }
 }
