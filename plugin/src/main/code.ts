@@ -194,6 +194,7 @@ const sendStatus = () => {
       fileKey: getConnectionFileKey(),
       fileName: figma.root.name,
       selectionCount: figma.currentPage.selection.length,
+      buildId: __PLUGIN_BUILD_ID__,
     },
   });
 };
@@ -743,7 +744,7 @@ const handleRequest = async (
 };
 
 void recoverOperations();
-figma.showUI(__html__, { width: 320, height: 180 });
+figma.showUI(__html__, { width: 320, height: 220 });
 sendStatus();
 
 figma.on("selectionchange", () => {
