@@ -1164,6 +1164,32 @@ async function testFindNodesJsonQuery() {
   assert.equal(result.matches[0].name, "Hero Card");
   assert.equal(result.matches[0].parentId, root.nodeId);
   assert.equal(result.matches[0].key, "hero-card");
+  assert.equal(Object.hasOwn(result.matches[0], "node"), false);
+}
+
+/** Compact search omits nested node trees; compact=false preserves the full node result. */
+async function testFindNodesCompactDefaultsToMetadataAndCanIncludeNode() {
+  globalThis.figma = createMockFigma();
+  const frame = await handleWriteRequest("create_frame", undefined, { name: "Card" });
+  const child = await handleWriteRequest("create_rectangle", undefined, {
+    parentId: frame.nodeId,
+    name: "Artwork",
+  });
+
+  const compact = await handleWriteRequest("find_nodes", undefined, { nodeId: frame.nodeId });
+  assert.equal(compact.matches.length, 1);
+  assert.equal(compact.matches[0].nodeId, frame.nodeId);
+  assert.deepEqual(compact.matches[0].path, ["Page 1", "Card"]);
+  assert.equal(Object.hasOwn(compact.matches[0], "node"), false);
+
+  const full = await handleWriteRequest("find_nodes", undefined, {
+    nodeId: frame.nodeId,
+    compact: false,
+  });
+  assert.equal(full.matches.length, 1);
+  assert.equal(full.matches[0].node.id, frame.nodeId);
+  assert.equal(full.matches[0].node.children[0].id, child.nodeId);
+  assert.ok(JSON.stringify(compact).length < JSON.stringify(full).length);
 }
 
 /** Verifies non-JSON query strings fall back to name substring matching. */
@@ -1500,6 +1526,7 @@ async function testFindNodesNodeSerializeFailureReturnsMinimalResultWithWarning(
     type: "COMPONENT",
     name: "Component",
     limit: 10,
+    compact: false,
   });
 
   assert.equal(result.summary.totalMatched, 2);
@@ -1858,6 +1885,7 @@ async function runTests() {
     ["testPartialFailure", testPartialFailure],
     ["testBatchValidationFailure", testBatchValidationFailure],
     ["testFindNodesJsonQuery", testFindNodesJsonQuery],
+    ["testFindNodesCompactDefaultsToMetadataAndCanIncludeNode", testFindNodesCompactDefaultsToMetadataAndCanIncludeNode],
     ["testFindNodesQuerySubstringFallback", testFindNodesQuerySubstringFallback],
     ["testFindNodesDefaultScopeStaysOnCurrentPage", testFindNodesDefaultScopeStaysOnCurrentPage],
     ["testFindNodesAllPagesTypeFilterIncludesRemotePages", testFindNodesAllPagesTypeFilterIncludesRemotePages],

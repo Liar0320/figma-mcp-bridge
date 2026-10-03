@@ -91,7 +91,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `create_text` | Create a text node on the current page |
 | `create_rectangle` | Create a rectangle on the current page |
 | `append_children` | Re-parent existing child nodes under a parent |
-| `find_nodes` | Find nodes on the current page by ID, name, key, or parent |
+| `find_nodes` | Find nodes on the current page by ID, name, key, or parent; returns compact match metadata by default (`compact: false` includes full node trees) |
 | `set_position` | Set node position |
 | `set_size` | Set node size |
 | `set_fills` | Set node fills using supported solid paints |
@@ -109,6 +109,8 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `measure_text` | Measure text with Figma-native fonts and dimensions; temporary measurement nodes are cleaned up on success or failure |
 | `validate_layout` | Read-only bounded diagnostics for explicit roots: bounds, clipping, truncation, text overlap, touch targets, and deterministic contrast |
 | `batch_mutation` | Execute up to 100 write operations in order, with temporary refs for multi-step generation |
+
+`find_nodes` defaults to `compact: true`: each match contains its ID, type, name, parent ID, plugin key (when set), page ID/name, and path, but not `node`. Set `compact: false` to include the serialized `node` and its descendants, or call `get_node` for a specific match. **Breaking change:** callers that read `matches[].node` must explicitly request `compact: false`.
 
 Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes, creating local `componentId` instances, combining two or more existing local Components into a native `COMPONENT_SET` via `combine_as_variants` (`componentIds`, optional `parentId`, `name`, `x`, `y`, `key`), managing variant names/properties on components inside a component set, managing component property definitions, setting instance component properties, and toggling exposed nested instances. `set_variant_properties` updates variants by renaming the target component to Figma's `Property=Value` syntax; `manage_component_properties` follows Figma Plugin API limits (for example, deleting `VARIANT` definitions is not supported by Figma). `set_exposed_instance` also follows Figma's native eligibility rules: the target must be an eligible nested instance inside a component/component set and may need exposed nested instances or children with component property references. Remote library import by component key remains out of scope for this pass.
 

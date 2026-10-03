@@ -800,6 +800,7 @@ export const toolInputSchemas = {
     nameMatch: findNodesNameMatch.optional().describe("Name matching mode. Defaults to contains."),
     limit: z.number().int().min(1).max(500).optional().describe("Maximum number of matches to return. Default 100, max 500."),
     includeHidden: z.boolean().optional().describe("Whether to include hidden nodes. Defaults to true for compatibility."),
+    compact: z.boolean().optional().default(true).describe("Default true: return match metadata without serialized node trees. Set false to include full node data."),
   }),
   delete_node: withFileKey({
     nodeId: figmaNodeId,
