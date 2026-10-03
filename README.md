@@ -105,6 +105,9 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `set_node_name` | Rename an existing Figma node |
 | `rename_node` | Alias for `set_node_name` |
 | `delete_node` | Delete a node |
+| `create_scene` | Declaratively preflight or create nested Frame/Text/Rectangle/Instance scenes; defaults to dry-run and enforces bounded refs, depth, and node counts |
+| `measure_text` | Measure text with Figma-native fonts and dimensions; temporary measurement nodes are cleaned up on success or failure |
+| `validate_layout` | Read-only bounded diagnostics for explicit roots: bounds, clipping, truncation, text overlap, touch targets, and deterministic contrast |
 | `batch_mutation` | Execute up to 100 write operations in order, with temporary refs for multi-step generation |
 
 Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes, creating local `componentId` instances, combining two or more existing local Components into a native `COMPONENT_SET` via `combine_as_variants` (`componentIds`, optional `parentId`, `name`, `x`, `y`, `key`), managing variant names/properties on components inside a component set, managing component property definitions, setting instance component properties, and toggling exposed nested instances. `set_variant_properties` updates variants by renaming the target component to Figma's `Property=Value` syntax; `manage_component_properties` follows Figma Plugin API limits (for example, deleting `VARIANT` definitions is not supported by Figma). `set_exposed_instance` also follows Figma's native eligibility rules: the target must be an eligible nested instance inside a component/component set and may need exposed nested instances or children with component property references. Remote library import by component key remains out of scope for this pass.
@@ -113,6 +116,8 @@ Write tools are intentionally scoped to the current page and a deterministic sub
 For built-in `Button` variants, the horizontal main axis uses Hug contents (`AUTO`) unless a visual template specifies a fixed width. Labels and optional icons determine button width. Use `set_layout_mode` with `primaryAxisSizingMode: "FIXED"` when equal-width buttons are required. Creation postflight validates the sizing mode and skips fixed-width equality checks for Hug variants.
 
 All Figma-backed tools accept an optional `fileKey`. When exactly one plugin instance is connected, tools remain backward compatible and can omit `fileKey`. When multiple Figma files/plugin instances are connected, tool calls fail closed unless the caller supplies a `fileKey`; call `list_files` first and pass the desired file's `fileKey` to read, screenshot, token, and write tools. Unsaved Figma files use a plugin-session fallback key so simultaneous `Untitled` files are still distinguishable.
+
+`batch_mutation` returns compact execution receipts by default. The default response includes execution counts, temporary refs, actual node IDs created by the batch, and failure/rollback details; it omits per-step serialized nodes. Existing callers that need `results` with detailed per-operation payloads must pass `"compact": false`. Atomic mode removes only nodes created by the failed batch; mutations to pre-existing nodes are not transactional.
 
 Within `batch_mutation`, temporary references must use the `tmp:` prefix, for example `ref: "tmp:modal"` and `nodeId: "tmp:modal"`. Bare labels like `"modal"` are treated as literal node IDs and are not resolved as batch refs.
 
