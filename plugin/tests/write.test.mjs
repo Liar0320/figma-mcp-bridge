@@ -60,7 +60,7 @@ function createMockFigma() {
   const createNodeId = () => `1:${nextId++}`;
 
   const documentNode = {
-    id: "document",
+    id: "0:0",
     type: "DOCUMENT",
     parent: null,
     children: [],
@@ -97,6 +97,7 @@ function createMockFigma() {
   };
 
   const page = createPageNode("1:0", "Page 1");
+  registry.set(documentNode.id, documentNode);
   registry.set(page.id, page);
 
   /** Tracks nodes created during a test so async lookup behaves like the Figma runtime. */
@@ -382,6 +383,36 @@ async function assertMutationError(promise, code, messagePattern, verify) {
   );
 }
 
+
+/** PAGE is a valid creation parent, while other mutation lookups still reject it. */
+async function testCreateFrameParentResolution() {
+  globalThis.figma = createMockFigma();
+  const page = globalThis.figma.currentPage;
+  const omitted = await handleWriteRequest("create_frame", undefined, { name: "Omitted" });
+  const explicit = await handleWriteRequest("create_frame", undefined, { parentId: page.id, name: "Explicit" });
+  const nested = await handleWriteRequest("create_frame", undefined, { parentId: explicit.nodeId, name: "Nested" });
+  assert.deepEqual(page.children.map((node) => node.name), ["Omitted", "Explicit"]);
+  assert.equal(omitted.parentId, page.id);
+  assert.equal(explicit.parentId, page.id);
+  assert.equal((await globalThis.figma.getNodeByIdAsync(nested.nodeId)).parent.id, explicit.nodeId);
+
+  const rectangle = globalThis.figma.createRectangle();
+  page.appendChild(rectangle);
+  const otherPage = globalThis.figma.createTestPage();
+  const foreignFrame = globalThis.figma.createFrame();
+  otherPage.appendChild(foreignFrame);
+  for (const [parentId, code] of [
+    ["1:9999", "NOT_FOUND"],
+    [globalThis.figma.root.id, "INVALID_PARENT"],
+    [rectangle.id, "INVALID_PARENT"],
+    [otherPage.id, "OUT_OF_SCOPE"],
+    [foreignFrame.id, "OUT_OF_SCOPE"],
+  ]) {
+    await assertMutationError(handleWriteRequest("create_frame", undefined, { parentId }), code);
+  }
+  await assertMutationError(handleWriteRequest("set_node_name", [page.id], { name: "No" }), "NOT_FOUND");
+  assert.deepEqual(page.children.map((node) => node.name), ["Omitted", "Explicit", "Rectangle"]);
+}
 
 /** Verifies single writes stay compact by default and explicit false restores snapshots. */
 async function testCompactDefaultsAndExplicitFullResults() {
@@ -1845,6 +1876,7 @@ async function testSetVariantPropertiesRejectsStandaloneComponent() {
 async function runTests() {
   const tests = [
     ["testCompactDefaultsAndExplicitFullResults", testCompactDefaultsAndExplicitFullResults],
+    ["testCreateFrameParentResolution", testCreateFrameParentResolution],
     ["testAtomicRollbackRemovesOnlyCreatedNodes", testAtomicRollbackRemovesOnlyCreatedNodes],
     ["testSetNodeNameRenamesExistingNode", testSetNodeNameRenamesExistingNode],
     ["testRenameNodeAliasRenamesExistingNode", testRenameNodeAliasRenamesExistingNode],

@@ -100,7 +100,7 @@ type WriteToolName = keyof Pick<
 export function registerTools(server: McpServer, node: Node): void {
   server.tool(
     "create_scene",
-    "Preflight and create a nested editable Frame/Text/Rectangle/Instance scene with native Auto Layout. Defaults to dry-run; dryRun=false creates nodes. Validates fonts, refs and component dependencies first; failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels.",
+    "Preflight and create a nested editable Frame/Text/Rectangle/Instance scene with native Auto Layout. Defaults to dry-run; dryRun=false creates nodes. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE or NONE-layout parents return INVALID_LAYOUT_DEPENDENCY in preflight. The optional parentId may reference the current PAGE or a container on it. Validates fonts, refs and component dependencies first; failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels.",
     toolInputSchemas.create_scene.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> =>
       renderResponse(() => node.sendWithParams("create_scene", undefined, params, fileKey))
@@ -477,7 +477,7 @@ export function registerTools(server: McpServer, node: Node): void {
   registerWriteTool("reconcile_component_set", "Run idempotent postflight reconciliation against an expected component set shape.", (args, fileKey) =>
     node.sendWithParams("reconcile_component_set", undefined, args, fileKey)
   );
-  registerWriteTool("create_frame", "Create a frame.", (args, fileKey) =>
+  registerWriteTool("create_frame", "Create a frame. Omit parentId for the current page, or pass the current PAGE ID or a container on it.", (args, fileKey) =>
     node.sendWithParams("create_frame", undefined, args, fileKey)
   );
   registerWriteTool("create_component", "Create a Figma component.", (args, fileKey) =>

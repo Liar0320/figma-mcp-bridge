@@ -781,12 +781,14 @@ async function getNodeById(nodeId: string, field = "nodeId"): Promise<SceneNode>
 
 /** Resolves the parent container for create operations, defaulting to the current page. */
 async function getParentNode(parentId?: string): Promise<(BaseNode & ChildrenMixin) | PageNode> {
-  if (!parentId) return figma.currentPage;
-  const node = await getNodeById(parentId, "parentId");
-  if (!("appendChild" in node)) {
+  if (!parentId || parentId === figma.currentPage.id) return figma.currentPage;
+  const node = await figma.getNodeByIdAsync(parentId);
+  if (!node) fail("NOT_FOUND", "parentId was not found");
+  if (node.type === "DOCUMENT" || !("appendChild" in node)) {
     fail("INVALID_PARENT", "parentId must reference a node that can contain children");
   }
-  return node;
+  if (!isOnCurrentPage(node)) fail("OUT_OF_SCOPE", "Mutations are restricted to the current page");
+  return node as BaseNode & ChildrenMixin;
 }
 
 /** Applies an explicit name or falls back to the default node label. */
