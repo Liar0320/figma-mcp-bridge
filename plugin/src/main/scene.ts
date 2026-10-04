@@ -101,10 +101,20 @@ function parseTree(raw: unknown, depth:number, refs:Set<string>, state:{count:nu
 
 function pageOf(node:any): any { let n=node; while (n && n.type !== "PAGE" && n.type !== "DOCUMENT") n=n.parent; return n?.type === "PAGE" ? n : undefined; }
 function axisSizing(node:SceneSpec, axis:"Horizontal"|"Vertical"): unknown { return node.props[`layoutSizing${axis}`]; }
-function validateLayoutDeps(node:SceneSpec, parent?:SceneSpec): void {
+function validateAbsoluteDependency(node:SceneSpec, parentRef:string, layoutMode:unknown, path:string[]): void {
+  const mode=layoutMode ?? "NONE";
+  if (mode !== "NONE" || node.props.layoutPositioning !== "ABSOLUTE") return;
+  fail(`${node.ref} layoutPositioning=ABSOLUTE requires auto-layout on parent ${parentRef} (layoutMode=NONE)`, "INVALID_LAYOUT_DEPENDENCY", {
+    childRef: node.ref, parentRef, path, parentProps: { layoutMode: mode },
+    childProps: { layoutPositioning: node.props.layoutPositioning },
+  });
+}
+
+function validateLayoutDeps(node:SceneSpec, parent?:SceneSpec, path:string[]=[node.ref]): void {
   const mode=node.props.layoutMode;
   if (parent) {
-    const pMode=parent.props.layoutMode;
+    const pMode=parent.props.layoutMode ?? "NONE";
+    validateAbsoluteDependency(node,parent.ref,pMode,path);
     for (const axis of ["Horizontal","Vertical"] as const) {
       const childSize=axisSizing(node,axis);
       if (childSize === "FILL" && pMode !== "HORIZONTAL" && pMode !== "VERTICAL") fail(`${node.ref} FILL requires auto-layout parent`);
@@ -113,16 +123,23 @@ function validateLayoutDeps(node:SceneSpec, parent?:SceneSpec): void {
     }
   }
   if (mode !== undefined && mode !== "NONE" && mode !== "HORIZONTAL" && mode !== "VERTICAL") fail(`Invalid layoutMode on ${node.ref}`);
-  for (const c of node.children) validateLayoutDeps(c,node);
+  for (const c of node.children) validateLayoutDeps(c,node,[...path,c.ref]);
 }
 
 async function preflight(roots:SceneSpec[], parentId?:string) {
   const refs=new Set<string>(), state={count:0}; const normalized=roots.map(r=>parseTree(r,1,refs,state));
   if (parentId !== undefined && (typeof parentId !== "string" || !/^\d+:\d+$/.test(parentId))) fail("parentId must use colon format");
-  if (parentId) {
-    const p=await figma.getNodeByIdAsync(parentId); if (!p || !("appendChild" in p)) fail("parentId must reference a container", "INVALID_PARENT");
-    if (pageOf(p)!==figma.currentPage) fail("parentId must be on current page", "INVALID_PARENT");
+  let parentRef=figma.currentPage.id;
+  let parentMode:unknown="NONE";
+  if (parentId && parentId !== figma.currentPage.id) {
+    const p=await figma.getNodeByIdAsync(parentId);
+    if (!p) fail("parentId was not found", "NOT_FOUND");
+    if (p.type === "DOCUMENT" || !("appendChild" in p)) fail("parentId must reference a container", "INVALID_PARENT");
+    if (pageOf(p)?.id !== figma.currentPage.id) fail("parentId must be on current page", "OUT_OF_SCOPE");
+    parentRef=p.id;
+    parentMode="layoutMode" in p ? p.layoutMode : "NONE";
   }
+  normalized.forEach(n=>validateAbsoluteDependency(n,parentRef,parentMode,[parentRef,n.ref]));
   normalized.forEach(n=>validateLayoutDeps(n));
   const fonts = new Map<string, FontDescriptor>();
   const all: SceneSpec[] = [];

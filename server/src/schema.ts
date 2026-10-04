@@ -22,7 +22,7 @@ const solidPaint = z.object({
 const childLayoutFields = {
   layoutSizingHorizontal: z.enum(["FIXED", "HUG", "FILL"]).optional(),
   layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
-  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional(),
+  layoutPositioning: z.enum(["AUTO", "ABSOLUTE"]).optional().describe("In create_scene, ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; a PAGE or NONE-layout container is invalid."),
   minWidth: z.number().finite().nonnegative().nullable().optional(),
   maxWidth: z.number().finite().nonnegative().nullable().optional(),
   minHeight: z.number().finite().nonnegative().nullable().optional(),
@@ -39,7 +39,7 @@ const containerLayoutFields = {
 };
 
 const createNodeBase = z.object({
-  parentId: figmaNodeId.optional(),
+  parentId: figmaNodeId.optional().describe("Omit for current page, or specify the current PAGE ID or a container on that page; other pages are out of scope."),
   name: z.string().min(1).optional(),
   x: z.number().optional(),
   y: z.number().optional(),
@@ -343,8 +343,8 @@ const layoutIssueCode = z.enum([
 
 export const toolInputSchemas = {
   create_scene: withFileKey({
-    parentId: figmaNodeId.optional(),
-    nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children."),
+    parentId: figmaNodeId.optional().describe("Omit for current page, or specify the current PAGE ID or a container on that page; other pages are out of scope."),
+    nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE and NONE-layout parents fail preflight."),
     dryRun: z.boolean().optional().default(true).describe("Preflight the entire scene without creating nodes. Only false creates persistent nodes."),
   }).strict(),
   measure_text: withFileKey({
