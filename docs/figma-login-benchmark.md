@@ -9,7 +9,7 @@
 ## 0. 共用前置与基线
 
 1. 在 Figma Desktop 打开目标文件，运行当前构建的 Figma MCP Bridge 插件，确认插件 Build ID；记录插件/Server 版本、Git commit 与未提交变更范围。`list_files` 取得本轮 `fileKey`，`get_metadata` 取得 `pageId`。插件未连通则标记 `not_run`，不要把连通失败计作设计质量问题。
-2. 在**专用测试文件或经用户明确清空的测试页**运行。用 `find_nodes` 查询 `parentId=<pageId>`，必须确认页面为空；非空则停止并换空白测试页，**不得自动删除已有画板**。本协议不创建/切换 Figma 页面，三 Agent 都写入这个已确认页面。
+2. 在**专用测试文件或经用户明确清空的测试页**运行。用 `find_nodes` 查询 `parentId=<pageId>`，确认页面状态。若页面为空，继续本轮；若页面存在内容，**必须暂停并向用户明确询问是否继续**，列出已发现的根节点 ID、名称、坐标和尺寸，说明继续会在同一页面新增三张画板、不会自动删除或覆盖已有节点。只有用户明确确认继续后，才可在报告中记录 `pageReuseConfirmed=true` 并继续；未确认、拒绝或无法取得确认时记 `not_run`，不得派发 Agent。用户确认继续后，三 Agent 仍只能写入各自分配坐标，不得改动既有节点。本协议不创建/切换 Figma 页面，也不自动删除已有画板。
 3. 选唯一 `RUN_ID`（如 `2026-10-03-a`），产物统一写到 `artifacts/login-benchmark/<RUN_ID>/`；路径已存在就换 RUN_ID。保留根节点 ID 和文件名，便于失败后检查；不盲目重放超时写入。同一轮只运行一种模式，不在一张页面内混用两套任务。
 4. **设计检索仅在协调者侧运行**：使用本仓库 `.agents/skills/ui-ux-pro-max/scripts/search.py` 分别执行以下只读查询；记录脚本版本/查询/原始输出。固定回归模式将推荐仅作资料，仍按冻结 brief 执行；开放探索模式把每条**原始输出**交给相应 Agent，让它在认证页语境下作选择。脚本的营销页建议（Hero/客户证言/产品指标）不能机械照搬。脚本缺失或执行失败时，固定模式可记录 `search.py: not_available` 后继续；开放模式应记 `not_run`，不能悄悄换成模型自由发挥。
 
@@ -24,7 +24,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "b2b enterprise saas clou
 ## 1. 固定工程回归（`fixed-regression-v1`）
 
 ```text
-按 docs/figma-login-benchmark.md 的 fixed-regression-v1 复测三张 Figma 登录页。本轮 RUN_ID=<填写>，fileKey=<list_files 的实际结果>，pageId=<get_metadata 的实际结果>。必须已确认该 pageId 下没有用户节点；否则停止，不清空画布。
+按 docs/figma-login-benchmark.md 的 fixed-regression-v1 复测三张 Figma 登录页。本轮 RUN_ID=<填写>，fileKey=<list_files 的实际结果>，pageId=<get_metadata 的实际结果>。先确认页面状态：若页面非空，暂停并向用户列出已有根节点 ID、名称、坐标和尺寸，询问是否继续；只有用户明确确认继续，才记录 `pageReuseConfirmed=true` 并继续。未获确认则停止，不删除用户节点。页面为空或用户已确认后，再派发 Agent。
 
 同时派发三个 OMP agent，各自只拥有一个根画板：x=0、1640、3280；y=0；尺寸均 1440x960。任务是独立的，三个 agent 同批 dispatch。将“共同执行合同”和本节各自完整 brief 原样交给对应 agent；不要让 agent 再搜索一次 UI/UX Pro Max 或自选第四种主题。协调者记录派发时间、完成/取消时间，复核三张截图及节点，并按文末模板报告所有 MCP 工具调用。不要因为 agent 声称完成就直接标记通过。
 ```
@@ -32,7 +32,7 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "b2b enterprise saas clou
 ### 共用执行合同（两种模式均原样放入三个 Agent 的共享 context）
 
 ```text
-这是一次静态、可编辑的 Figma 登录页复测。仅在已分配坐标新增自己的 1440x960 根画板；不得改动其他 agent 或用户节点。始终传入本轮真实 fileKey，不要写死历史 session key。使用本仓库 .agents/skills/figma-scene-rapid-prototyping/SKILL.md 与 figma-product-designer 的相关工程、验收规则；使用任何 xd:// MCP 工具前先读其当前 schema。已有约束与运行时返回冲突时，以当前 schema/运行时为准并记录偏差。
+这是一次静态、可编辑的 Figma 登录页复测。仅在已分配坐标新增自己的 1440x960 根画板；不得改动其他 agent 或用户节点。始终传入本轮真实 fileKey，不要写死历史 session key。若协调者报告 `pageReuseConfirmed=true`，该确认只允许在分配坐标新增本轮节点，不允许删除、移动、重命名、覆盖或修改既有节点。使用本仓库 .agents/skills/figma-scene-rapid-prototyping/SKILL.md 与 figma-product-designer 的相关工程、验收规则；使用任何 xd:// MCP 工具前先读其当前 schema。已有约束与运行时返回冲突时，以当前 schema/运行时为准并记录偏差。
 
 优先 native Frame/Text/Rectangle + Auto Layout，整页需可编辑；只做必要的局部组件复用，不预建 component set / token 系统。create_frame 创建根画板；create_scene 先 dryRun:true 预检，再以相同节点树 dryRun:false 写入。预检不创建节点；每次失败记录错误码、位置、修复动作。每批最多 100 节点、16 层，复杂画面可在本次根画板下分段写入。
 
@@ -69,12 +69,12 @@ scene 的 ref 需唯一，推荐以字母开头且只用 ASCII 字母/数字/下
 
 ## 2. 开放设计探索（`open-exploration-v1`）
 
-沿用第 0 节空白页面检查与第 1 节的**共用执行合同**，但**不要使用第 1 节三个固定 brief**。协调者在派发前为三个类别各运行一次第 0 节的 `search.py` 命令，将每条完整原始输出（或可读取的本地输出路径）仅交给对应 Agent；保留查询及脚本版本作为证据。同一轮中不重复检索、不重新选类别，不给 Agent 预选 HEX、字体、列宽或页面构图。CLI 输出的推荐不是产品事实、不能替代设计判断。
+沿用第 0 节页面状态确认与第 1 节的**共用执行合同**，但**不要使用第 1 节三个固定 brief**。协调者在派发前为三个类别各运行一次第 0 节的 `search.py` 命令，将每条完整原始输出（或可读取的本地输出路径）仅交给对应 Agent；保留查询及脚本版本作为证据。同一轮中不重复检索、不重新选类别，不给 Agent 预选 HEX、字体、列宽或页面构图。CLI 输出的推荐不是产品事实、不能替代设计判断。
 
 ### 复制给协调者的开放探索指令
 
 ```text
-按 docs/figma-login-benchmark.md 的 open-exploration-v1 创建三张 Figma 登录页。RUN_ID=<填写>，fileKey=<list_files 的实际结果>，pageId=<get_metadata 的实际结果>。确认页面空白且三条 search.py 命令均成功，保存各自的完整原始输出；否则停止，不删除用户节点。
+按 docs/figma-login-benchmark.md 的 open-exploration-v1 创建三张 Figma 登录页。RUN_ID=<填写>，fileKey=<list_files 的实际结果>，pageId=<get_metadata 的实际结果>。先确认页面状态：若页面非空，暂停并向用户列出已有根节点及其坐标/尺寸，询问是否继续；只有用户明确确认继续，才记录 `pageReuseConfirmed=true` 并继续。未获确认则停止，不删除用户节点。页面为空或用户已确认后，再确认三条 search.py 命令均成功并保存各自完整原始输出；否则停止，不删除用户节点。
 
 同时派发三个 OMP agent，每个 agent 只处理本节对应类别、坐标与检索结果，共同执行合同放共享 context。三个独立任务同批 dispatch。让 Agent 从推荐中挑选、改造或拒绝风格/颜色/字体/版式，不要把检索输出逐字当成登录页规范，也不要转交其他类别的推荐。协调者复核三个最终节点、截图与实际工具日志，按文末模板报告。不要把三者的视觉差异解释成 MCP 性能变化。
 ```
@@ -106,6 +106,7 @@ PNG: artifacts/login-benchmark/<RUN_ID>/03-enterprise-cloud.png。返回根节�
 ## 3. 验收与停止条件
 
 - 每个 Agent 的状态分别记为 `passed` / `failed` / `cancelled` / `not_run`，不要把文件已导出等同于通过。完成条件：根画板存在且尺寸/坐标正确；Email、Password、Sign in、Forgot password?、Create account 可见且原生可编辑；同一根节点截图已导出并人工读图；`validate_layout` 已执行且对严重裁切/重叠有处理或明确未通过。开放模式还要报告检索建议的采纳/改造/拒绝理由及实际配色、字体、构图。
+- 若页面非空但用户明确确认继续，报告必须记录 `pageReuseConfirmed=true`、确认时间（UTC）、确认原文或可审计引用，以及继续前发现的既有根节点清单。该确认只授权在本轮分配坐标新增节点，不授权删除、移动、重命名、覆盖或修改既有节点。
 - 根画板不得为了微调反复删除重建；如确实删除过，报告每次操作和最终状态，不掩盖失败阶段。检查是否留有无内容空画板；不自动清理用户内容。
 - 若单个 Agent 在完整画板与截图之后持续重复预检、重绘或偏离目标，协调者停止其任务并保留当时证据，记 `cancelled`。不要以事后截图证明它仍在运行的画板必然保留。
 - 设计流程优化复盘至少回答：是否在首次 live 前解决布局依赖；是否重复截图/诊断而没有产生修复决策；是否因 wrapper/eval 或错误工具路径增加不可归因开销；是否将营销检索正确收敛为认证页结构；是否保留开放探索的视觉自主性。把“调用少”与“设计好”分开评价。
@@ -119,7 +120,7 @@ PNG: artifacts/login-benchmark/<RUN_ID>/03-enterprise-cloud.png。返回根节�
 ```markdown
 # Login Benchmark — <RUN_ID>
 模式：<fixed-regression-v1 | open-exploration-v1>；对比边界：<同一固定 brief 的上一轮 RUN_ID，或“探索模式，不做同任务性能对比”>。
-环境：fileKey=<...>；pageId=<...>；插件 Build ID=<...>；server/plugin 版本=<...>；commit/未提交变更=<...>。
+环境：fileKey=<...>；pageId=<...>；pageReuseConfirmed=<true|false>；确认时间（UTC）=<... 或 not_applicable>；确认原文/可审计引用=<... 或 not_applicable>；插件 Build ID=<...>；server/plugin 版本=<...>；commit/未提交变更=<...>。
 检索依据：search.py 版本=<commit/hash 或 not_available>；三条查询及完整原始输出=<路径或 not_available>。
 
 | 类别 | Agent 状态 | 根节点/坐标 | 截图 | 预检 | 实际写入 | 诊断与肉眼结论 | 首屏/截图/总时间 |

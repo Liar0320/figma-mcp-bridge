@@ -60,6 +60,24 @@ For docs-only PRs, also run from the repository root:
 git diff --check
 ```
 
+## Live HTTP RPC tests
+
+With the built server running and the plugin open in a **disposable or explicitly approved Figma page**:
+
+```bash
+node tests/rpc/run.mjs --list
+node tests/rpc/run.mjs get_metadata/current-page --file-key YOUR_CONNECTED_FILE_KEY
+node tests/rpc/run.mjs create_scene/layout-dependency --allow-write --file-key YOUR_CONNECTED_FILE_KEY
+node tests/rpc/run.mjs create_scene/text-timeout --allow-write --file-key YOUR_CONNECTED_FILE_KEY
+node tests/rpc/run.mjs create_frame/page-parent --allow-write --file-key YOUR_CONNECTED_FILE_KEY
+```
+
+Run one selected test per invocation. `--file-key` is optional only with exactly one connected file. `FIGMA_BRIDGE_URL` overrides `http://localhost:1994`. `tests/rpc/core/` owns discovery, connection, timing and JSON output; each independently editable file in `tests/rpc/tools/<tool>/<test>.mjs` exports a default async function receiving `{ request, pageId, fileKey }`. No central registry needs updating: the path under `tools/` is the CLI test name. Tests that only read export `writes = false`; write tests default to requiring `--allow-write`. `request(tool, params, label, nodeIds?)` emits the exact payload, UTC timestamps, duration and response as newline-delimited JSON. The case returns a final observation. Save stdout externally when a persistent trace is needed.
+
+`layout-dependency` (#60) compares invalid layout dry-run/live; `text-timeout` (#61) compares a 2-Text control and a 4-Text scene in separate frames with one read after each live write; `page-parent` (#62) compares omitted/explicit PAGE parents for `create_frame` and dry-run/live `create_scene`. These are **live diagnostic tests**, not a green regression suite or evidence of root cause. For #61, compare HTTP timing with MCP client/server/plugin request-ID logs: `/rpc` bypasses the MCP client's receive deadline.
+
+Safety: write tests require `--allow-write`. The runner never retries or cleans up writes; a timed-out write has unknown outcome, so inspect its recorded root ID rather than replaying it. Write tests create uniquely named nodes, never alter existing nodes, and should run on an approved page. `/ping` alone is not proof of plugin connection. Plugin runtime changes still require build, Figma plugin restart and live exercise per `AGENTS.md`; HTTP tests do not replace final MCP entrypoint validation.
+
 ## Common Troubleshooting
 
 ### Plugin not connected
