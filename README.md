@@ -144,6 +144,7 @@ Use [ENGINEERING_REVIEW_GUIDELINES.md](./ENGINEERING_REVIEW_GUIDELINES.md) as th
 - [docs/design-token-tools.md](./docs/design-token-tools.md): token graph, usage, audit, proposal, dry-run write, and export workflows.
 - [docs/development-workflow.md](./docs/development-workflow.md): local server/plugin setup, validation commands, Figma plugin import, and common troubleshooting.
 - [docs/multi-file-routing.md](./docs/multi-file-routing.md): multi-file/plugin-instance routing behavior, `list_files`, `fileKey`, and live verification checklist.
+- [docs/figma-login-benchmark.md](./docs/figma-login-benchmark.md): fixed three-agent login-page retest prompt, Figma evidence, and per-agent MCP call reporting.
 - [skills/README.md](./skills/README.md): repo-local agent skills that capture practical MCP tool-selection, safety, screenshot, write, token, and debug workflows.
 
 ## Contributing

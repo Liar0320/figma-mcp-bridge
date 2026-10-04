@@ -19,30 +19,23 @@ description: Rapidly create editable Figma screens, prototypes, landing pages, a
 
 ---
 
-## `create_scene` 一次性通过黄金规则 (Zero-Dryrun Pass Rules)
+## `create_scene` 预检与落地规则
 
-`create_scene` 工具默认 `dryRun: true`，且服务端的结构校验极其严格（Fail-Closed）。为避免反复试探（如连续 6 次预检修补），必须遵守以下规则：
+`create_scene` 默认 `dryRun: true`。以当前工具 schema 和运行时响应为准；一次预检失败应按具体错误修复，而不是套用过时的禁用字段清单。
 
 ### 1. `ref` 标识符命名规范
-- **必须匹配 `^[a-zA-Z0-9_]+$`**。
-- **严禁**空格、斜杠、横杠、中文或特殊字符（如 ❌ `Email / Input`、`btn-primary`、`用户表单`；✅ `email_input`、`btn_primary`、`user_form`）。
+- 运行时接受 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`，同一场景内必须唯一。为跨工具一致，推荐字母开头的 ASCII 字母、数字与下划线；不要把更窄的建议误称为硬限制。
 
-### 2. 根容器与主分栏尺寸规则（避开弹性尺寸预检死锁）
-- **顶层容器必须是明确像素尺寸**：`width` 和 `height` 必须显式声明（如 1440×960），且 `layoutSizingHorizontal: 'FIXED'`, `layoutSizingVertical: 'FIXED'`。
-- **直接子分栏（如左右分栏）必须给固定尺寸**：在场景树预检时，如果父级尚未计算最终布局，给子级直接挂 `layoutSizingHorizontal: 'FILL'` 会引发校验错误。应先指定显式像素宽度（如左栏 800，右栏 640）。
-- **内部流式元素使用 FILL**：只有深层确有包裹父级的容器内部，才使用 `FILL`。
+### 2. 布局尺寸与依赖
+- 顶层画板及主分栏建议给定明确宽高，例如 1440×960、左右两栏各自宽度；这是可预测布局的策略，不是所有场景的运行时硬要求。
+- `FILL` 需要 Auto Layout 父容器、匹配的填充轴，并且不能与父级同轴 `HUG` 冲突。根据预检结果修正布局依赖，不要盲目将内部 `FILL` 全部改成 `FIXED`。
 
-### 3. 组件实例 (INSTANCE) 的尺寸安全约束
-- 如果场景树内引用了外部 `COMPONENT`（即 `type: 'INSTANCE'`）：
-  - **不要设置 `layoutSizingVertical: 'HUG'`**（组件未挂载前高度自适应会引发预检冲突）。
-  - 给其保留明确的固定高度占位，或省略垂直 sizing 字段。
+### 3. 组件实例与文本
+- `INSTANCE` 需要本文件有效的 `COMPONENT` ID；没有实际复用需求时，用原生 Frame 完成探索稿即可。尺寸模式以当前预检和实际渲染为准，不把某个模式一概视为禁用。
+- 多行文本建议给定 `props.width`、`props.style.fontFamily`、`props.style.fontSize` 和 **`props.style.textAutoResize: "HEIGHT"`**；短标签可用 `props.style.textAutoResize: "WIDTH_AND_HEIGHT"`。`textAutoResize` 不属于 `props` 顶层。
+- 字体使用目标 Figma 文件实际可加载的 family/style。当前 `create_scene` 对 `SemiBold`、`ExtraBold`、`UltraLight` 等支持有限别名候选；预检若返回 `FONT_STYLE_FALLBACK`，记录请求值和实际值，不默认为视觉等价。未知字体仍可能返回 `FONT_LOAD_FAILED`。
 
-### 4. 文本节点安全属性与字重别名禁忌
-- 凡是段落或多行文本，必须显式给定 `width`、`style.fontFamily`（推荐通用安全的 `'Inter'`）、`style.fontSize`，以及 `props.textAutoResize: 'HEIGHT'`。
-- **字重样式规范**：严禁使用特异别名（如 `SemiBold`、`Inter-Medium`）。在 Figma 原生 API 中，Inter 样式名为带空格的 `'Semi Bold'`、`'Regular'` 或 `'Bold'`。避免触发 `FONT_LOAD_FAILED` 导致整批场景被拒。
-- 单行文字或由文字撑开的标签，可使用 `props.textAutoResize: 'WIDTH_AND_HEIGHT'`。
-
-### 5. 画板删除重绘原则（No Delete-and-Redo for Minor Fixes）
+### 4. 画板删除重绘原则（No Delete-and-Redo for Minor Fixes）
 - **小修小改严禁使用 `delete_node` 删掉整张画板**：如果画板整体结构已成立，仅局部尺寸、间距、文字有偏差，严禁将整页画板销毁重新生成。应保留现有节点直接交付，或针对局部子节点做增量 patch。
 - **何时允许删除**：仅在方案完全走偏、或者用户/流程明确要求“彻底废弃该探索方向不要了”时，才允许对根画板执行 `delete_node`。
 ## 高效标准工作流（3 步极速着陆）
@@ -61,12 +54,12 @@ description: Rapidly create editable Figma screens, prototypes, landing pages, a
 }
 ```
 
-### Step 2: 组装结构并直接单次注入 (`create_scene`)
-利用上述规则直接编写包含完整内容的结构树，单次或最多两次注入（一次预检确认，一次 `dryRun: false` 真实写入）：
+### Step 2: 组装结构并预检后注入 (`create_scene`)
+先用 `dryRun: true` 预检，再用相同节点树、`dryRun: false` 写入；预检减少无效创建，不保证写入后无需截图纠正：
 ```json
 {
   "parentId": "<FRAME_ID>",
-  "dryRun": false,
+  "dryRun": true,
   "fileKey": "<CURRENT_FILE_KEY>",
   "nodes": [
     {
@@ -80,17 +73,14 @@ description: Rapidly create editable Figma screens, prototypes, landing pages, a
         "layoutSizingHorizontal": "FIXED",
         "layoutSizingVertical": "FIXED"
       },
-      "children": [
-        /* 左分栏 / 视觉区 */
-        /* 右分栏 / 核心交互区 */
-      ]
+      "children": []
     }
   ]
 }
 ```
 
 ### Step 3: 截图自检与产物交付 (`save_screenshots`)
-在页面落成后立即调用 `save_screenshots` 导出 PNG，核对实际视觉与排版：
+预检通过后以 `dryRun: false` 写入，并在页面落成后调用 `save_screenshots` 导出 PNG，核对实际视觉与排版：
 ```json
 {
   "items": [
