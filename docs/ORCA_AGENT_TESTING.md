@@ -26,6 +26,15 @@
    - Agent 返回了以 `LUN` 开头的响应，并进入空闲状态；该模型调用成功。
    - Agent 已关闭，返回 `ptyKilled: true`。
 
+
+4. **Pi Agent (`--no-skills`)**
+   - 启动命令：`pi --no-skills`
+   - 界面确认模型：`gpt-6-luna (gac)`
+   - 第一轮测试提示：`只回复：PI_TEST_OK_20261007。不要调用任何工具，不要做多余输出。`
+   - Agent 返回响应：`PI_TEST_OK_20261007`
+   - 第二轮测试提示：`再回复一次：PI_REPLY_2_OK`
+   - Agent 返回响应：`PI_REPLY_2_OK`
+   - Agent 已关闭，返回 `ptyKilled: true`。
 本次验证结论：`openai-codex/gpt-6-luna` 可以通过 Orca 启动，模型识别正确，并能处理测试请求。
 
 ## 最短启动路径与实测耗时
@@ -238,3 +247,62 @@ wait → send → read → close
 ```
 
 不要混用两个终端句柄。
+
+## Pi Agent 最小链路测试（--no-skills）
+
+### 1. 启动 Pi Agent
+
+```bash
+orca terminal create \
+  --worktree active \
+  --command 'pi --no-skills' \
+  --title 'test-pi-agent' \
+  --json
+```
+
+获取返回的句柄，例如 `term_9b53f399-3bcc-4d4e-9cb0-c4b34bddb404`。
+
+### 2. 等待 TUI 空闲就绪
+
+```bash
+orca terminal wait \
+  --terminal term_XXXXXXXX \
+  --for tui-idle \
+  --timeout-ms 30000 \
+  --json
+```
+
+### 3. 发送测试提示
+
+```bash
+orca terminal send \
+  --terminal term_XXXXXXXX \
+  --text '只回复：PI_TEST_OK_20261007。不要调用任何工具，不要做多余输出。' \
+  --enter \
+  --wait-submit 10 \
+  --json
+```
+
+### 4. 等待完成并读取输出
+
+```bash
+orca terminal wait \
+  --terminal term_XXXXXXXX \
+  --for tui-idle \
+  --timeout-ms 30000 \
+  --json
+```
+
+```bash
+orca terminal read \
+  --terminal term_XXXXXXXX \
+  --json
+```
+
+### 5. 关闭终端
+
+```bash
+orca terminal close \
+  --terminal term_XXXXXXXX \
+  --json
+```
