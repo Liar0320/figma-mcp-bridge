@@ -1,3 +1,4 @@
+import { findCanvasSlot } from "./canvasSlot";
 import { serializeNode, type SerializedNode } from "./serializer";
 import {
   buildReconciliationPlan,
@@ -351,6 +352,10 @@ function validateComponentPropertyOperations(value: unknown): void {
 function validateCreateNodeBase(params: Record<string, unknown>): void {
   getOptionalFigmaNodeId(params.parentId, "parentId");
   getOptionalNonEmptyString(params.name, "name");
+  if (params.position !== undefined && params.position !== "auto") fail("INVALID_INPUT", "position must be auto");
+  if (params.position === "auto" && (params.x !== undefined || params.y !== undefined)) {
+    fail("INVALID_INPUT", "position=auto cannot be combined with explicit x/y");
+  }
   if (params.x !== undefined) getNumber(params.x, "x");
   if (params.y !== undefined) getNumber(params.y, "y");
   if (params.width !== undefined) getPositiveNumber(params.width, "width");
@@ -1014,9 +1019,15 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
     applyPadding(node, params?.padding);
     applyItemSpacing(node, params?.itemSpacing);
     setPluginData(node, getOptionalString(params?.key));
-    parent.appendChild(node);
-    applyPosition(node, params);
     applySize(node, params);
+    if (params?.position === "auto") {
+      const slot = await findCanvasSlot({ width: node.width, height: node.height }, parent);
+      node.x = slot.x;
+      node.y = slot.y;
+    } else {
+      applyPosition(node, params);
+    }
+    parent.appendChild(node);
     applyLayoutProperties(node, params);
     return toMutationResult(node, params?.compact === false);
   } catch (error) {

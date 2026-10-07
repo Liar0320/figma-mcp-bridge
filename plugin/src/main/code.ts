@@ -26,6 +26,7 @@ import { chunkMatrix, createScreenshotReport, componentError, serializeComponent
 import { createScene } from "./scene";
 import { measureText } from "./textMeasurement";
 import { validateLayout } from "./layoutDiagnostics";
+import { findCanvasSlot } from "./canvasSlot";
 
 type RequestType =
   | "create_scene"
@@ -91,7 +92,8 @@ type RequestType =
   | "rollback_operation"
   | "resume_operation"
   | "get_component_matrix"
-  | "get_component_screenshot_report";
+  | "get_component_screenshot_report"
+  | "find_canvas_slot";
 
 type ServerRequest = {
   type: RequestType;
@@ -177,6 +179,7 @@ const READ_REQUEST_TYPES = new Set<RequestType>([
   "get_component_screenshot_report",
   "get_operation_journal",
   "validate_layout",
+  "find_canvas_slot",
 ]);
 
 const pluginSessionId = `session-${Date.now().toString(36)}-${Math.random()
@@ -661,6 +664,12 @@ const handleRequest = async (
           type: request.type,
           requestId: request.requestId,
           data: await validateLayout(request.params as Record<string, unknown> | undefined),
+        };
+      case "find_canvas_slot":
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await findCanvasSlot(request.params as Record<string, unknown> | undefined),
         };
       case "migrate_component_set":
       case "repair_component_set":

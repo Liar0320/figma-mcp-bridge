@@ -43,6 +43,25 @@ test("scene fails closed on unknown props and unsupported child ownership", () =
   }
 });
 
+test("canvas slot and automatic frame placement schemas enforce supported bounds", () => {
+  const schema = toolInputSchemas.find_canvas_slot;
+  for (const input of [
+    { width: 0 },
+    { width: 320, height: 0 },
+    { width: 320, direction: "left" },
+    { width: 320, spacing: -1 },
+    { width: 320, nearNodeId: "1-2" },
+  ]) {
+    assert.equal(schema.safeParse(input).success, false);
+  }
+  assert.equal(schema.safeParse({ width: 320, height: 480, spacing: 80, direction: "bottom", nearNodeId: "1:2" }).success, true);
+  assert.equal(toolInputSchemas.create_scene.safeParse({
+    position: "auto",
+    nodes: [{ ref: "root", type: "FRAME", props: { width: 320, height: 480 } }],
+  }).success, true);
+  assert.equal(toolInputSchemas.create_frame.safeParse({ position: "auto" }).success, true);
+});
+
 test("measurement rejects zero or infinite widths and unsupported auto-resize overrides", () => {
   for (const item of [
     { characters: "Long label", width: 0 },

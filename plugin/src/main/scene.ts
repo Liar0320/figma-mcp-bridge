@@ -1,3 +1,4 @@
+import { findCanvasSlot } from "./canvasSlot";
 import { handleWriteRequest, validateWriteToolParams } from "./write";
 
 type NodeType = "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE";
@@ -213,16 +214,35 @@ function errorWithCleanup(error:unknown, attempted:string[], removed:string[], f
 
 export async function createScene(params:Record<string,unknown>|undefined):Promise<unknown>{
   if(!isObj(params)) fail("params must be an object");
-  for (const k of Object.keys(params)) if (!["parentId","nodes","dryRun"].includes(k)) fail(`Unknown top-level field ${k}`);
+  for (const k of Object.keys(params)) if (!["parentId","nodes","dryRun","position"].includes(k)) fail(`Unknown top-level field ${k}`);
   if(typeof params.dryRun!=="undefined"&&typeof params.dryRun!=="boolean") fail("dryRun must be a boolean");
+  if(params.position!==undefined&&params.position!=="auto") fail("position must be auto");
   if(params.parentId!==undefined&&typeof params.parentId!=="string") fail("parentId must be a string");
   if(!Array.isArray(params.nodes)||params.nodes.length===0) fail("nodes must be a non-empty array");
-  const pre=await preflight(params.nodes as SceneSpec[],params.parentId as string|undefined); const dryRun=params.dryRun!==false;
-  if(dryRun) return {dryRun:true,nodeCount:pre.all.length,rootNodeIds:[],createdNodeIds:[],refs:pre.all.map(n=>({ref:n.ref,type:n.type})),fonts:pre.fonts,warnings:pre.warnings};
+  const pre=await preflight(params.nodes as SceneSpec[],params.parentId as string|undefined);
+  let plannedPosition: { x: number; y: number; strategy: string } | undefined;
+  if (params.position === "auto") {
+    if (pre.normalized.length !== 1 || pre.normalized[0].type !== "FRAME") fail("position=auto requires exactly one root FRAME");
+    const root = pre.normalized[0];
+    if (root.props.x !== undefined || root.props.y !== undefined) fail("position=auto cannot be combined with explicit root x/y");
+    const parentId = params.parentId as string | undefined;
+    const parent = parentId && parentId !== figma.currentPage.id
+      ? await figma.getNodeByIdAsync(parentId)
+      : figma.currentPage;
+    if (!parent || !("children" in parent)) fail("position=auto parent must be a container");
+    const slot = await findCanvasSlot({
+      width: typeof root.props.width === "number" ? root.props.width : 100,
+      height: typeof root.props.height === "number" ? root.props.height : 100,
+    }, parent as PageNode | (BaseNode & ChildrenMixin));
+    plannedPosition = { x: slot.x, y: slot.y, strategy: slot.strategy };
+    root.props = { ...root.props, x: slot.x, y: slot.y };
+  }
+  const dryRun=params.dryRun!==false;
+  if(dryRun) return {dryRun:true,nodeCount:pre.all.length,rootNodeIds:[],createdNodeIds:[],refs:pre.all.map(n=>({ref:n.ref,type:n.type})),fonts:pre.fonts,warnings:pre.warnings,...(plannedPosition ? { plannedPosition } : {})};
   const refs:Record<string,string>={}, created:string[]=[];
   try {
     const create=async(n:SceneSpec,parent:string|undefined)=>{ const [initial,deferred]=splitProps(n.props); initial.parentId=parent; if(n.type==="INSTANCE") delete initial.properties; const result:any=await handleWriteRequest(writeType(n.type),undefined,{...initial,compact:true}); if(!result||typeof result.nodeId!=="string") fail(`Creation failed for ${n.ref}`); refs[n.ref]=result.nodeId; created.push(result.nodeId); for(const c of n.children) await create(c,result.nodeId); if(Object.keys(deferred).length) await handleWriteRequest("set_layout_mode",[result.nodeId],{...deferred,compact:true}); if(n.type==="INSTANCE"&&isObj(n.props.properties)) await handleWriteRequest("set_component_properties",undefined,{instanceId:result.nodeId,properties:n.props.properties,compact:true}); };
     for(const n of pre.normalized) await create(n,params.parentId as string|undefined);
-    return {dryRun:false,nodeCount:pre.all.length,rootNodeIds:pre.normalized.map(n=>refs[n.ref]),createdNodeIds:created,refs,warnings:pre.warnings};
+    return {dryRun:false,nodeCount:pre.all.length,rootNodeIds:pre.normalized.map(n=>refs[n.ref]),createdNodeIds:created,refs,warnings:pre.warnings,...(plannedPosition ? { plannedPosition } : {})};
   } catch(error){ const attempted=[...created], removed:string[]=[], failed:string[]=[]; for(const id of [...created].reverse()){ try{ await handleWriteRequest("delete_node",[id],{nodeId:id,compact:true}); removed.push(id); }catch{ failed.push(id); } } return errorWithCleanup(error,attempted,removed,failed); }
 }

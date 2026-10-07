@@ -13,7 +13,7 @@
   "include": [
     "src/main/write.ts",
     "src/main/scene.ts",
-    "src/main/textMeasurement.ts",
+    "src/main/canvasSlot.ts",
     "src/main/layoutDiagnostics.ts",
     "src/main/serializer.ts",
     "src/main/tokenUsage.ts",

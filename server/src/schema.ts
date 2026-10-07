@@ -345,6 +345,7 @@ export const toolInputSchemas = {
   create_scene: withFileKey({
     parentId: figmaNodeId.optional().describe("Omit for current page, or specify the current PAGE ID or a container on that page; other pages are out of scope."),
     nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE and NONE-layout parents fail preflight."),
+    position: z.enum(["auto"]).optional().describe("Automatically place the first root frame in a collision-free canvas slot; explicit root x/y values are not allowed with auto."),
     dryRun: z.boolean().optional().default(true).describe("Preflight the entire scene without creating nodes. Only false creates persistent nodes."),
   }).strict(),
   measure_text: withFileKey({
@@ -362,6 +363,13 @@ export const toolInputSchemas = {
     minTouchTarget: z.number().finite().positive().optional(),
     interactiveNodeIds: z.array(figmaNodeId).max(2000).optional(),
     ignore: z.array(z.object({ nodeId: figmaNodeId, code: layoutIssueCode }).strict()).max(2000).optional(),
+  }).strict(),
+  find_canvas_slot: withFileKey({
+    width: z.number().positive().describe("Expected width of the new frame"),
+    height: z.number().positive().optional().describe("Expected height of the new frame; defaults to width"),
+    direction: z.enum(["right", "bottom"]).optional().describe("Preferred packing direction; defaults to right"),
+    spacing: z.number().nonnegative().optional().describe("Gap between existing bounds and the new frame; defaults to 80"),
+    nearNodeId: figmaNodeId.optional().describe("If provided, calculates a slot directly adjacent to this reference node"),
   }).strict(),
   create_component_set: withFileKey(createComponentSetOptions),
   inspect_component_set: withFileKey({
@@ -626,6 +634,7 @@ export const toolInputSchemas = {
   }),
   create_frame: createNodeBase.extend({
     fileKey: fileKeyField,
+    position: z.enum(["auto"]).optional().describe("Automatically place the frame in a collision-free slot; explicit x/y values are not allowed with auto."),
     fills: z.array(solidPaint).optional(),
     strokes: z.array(solidPaint).optional(),
     cornerRadius: z.number().nonnegative().optional(),
@@ -826,6 +835,7 @@ const rpcToArgs: Record<
   create_scene: (_nodeIds, params) => ({ ...params }),
   measure_text: (_nodeIds, params) => ({ ...params }),
   validate_layout: (_nodeIds, params) => ({ ...params }),
+  find_canvas_slot: (_nodeIds, params) => ({ ...params }),
   inspect_component_set: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),
   validate_component_plan: (_nodeIds, params) => ({ ...params }),
   plan_component_migration: (nodeIds, params) => ({ componentSetId: nodeIds?.[0], ...params }),

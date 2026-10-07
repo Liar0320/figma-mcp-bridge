@@ -1872,9 +1872,37 @@ async function testSetVariantPropertiesRejectsStandaloneComponent() {
   );
 }
 
+async function testCreateFrameAutoPositionAndValidation() {
+  globalThis.figma = createMockFigma();
+  const existing = await handleWriteRequest("create_frame", undefined, { name: "Existing" });
+  const existingNode = await globalThis.figma.getNodeByIdAsync(existing.nodeId);
+  existingNode.x = 20;
+  existingNode.y = 40;
+  existingNode.width = 300;
+  existingNode.height = 500;
+
+  const created = await handleWriteRequest("create_frame", undefined, {
+    name: "Automatic",
+    position: "auto",
+    width: 240,
+    height: 320,
+  });
+  const createdNode = await globalThis.figma.getNodeByIdAsync(created.nodeId);
+  assert.equal(createdNode.x, 400);
+  assert.equal(createdNode.y, 40);
+
+  await assertMutationError(
+    handleWriteRequest("create_frame", undefined, { position: "auto", x: 5 }),
+    "INVALID_INPUT",
+    /cannot be combined/
+  );
+}
+
+
 /** Runs the write-tool test cases and reports a simple pass/fail summary. */
 async function runTests() {
   const tests = [
+    ["testCreateFrameAutoPositionAndValidation", testCreateFrameAutoPositionAndValidation],
     ["testCompactDefaultsAndExplicitFullResults", testCompactDefaultsAndExplicitFullResults],
     ["testCreateFrameParentResolution", testCreateFrameParentResolution],
     ["testAtomicRollbackRemovesOnlyCreatedNodes", testAtomicRollbackRemovesOnlyCreatedNodes],
