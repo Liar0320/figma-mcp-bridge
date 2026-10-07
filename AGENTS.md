@@ -64,6 +64,10 @@ fix(tokens): preserve Unicode token path segments
 BREAKING CHANGE: token paths for non-ASCII variable names now preserve Unicode instead of ASCII slugifying them.
 ```
 
+## Figma design agent lifecycle
+
+For any Agent asked to create or revise editable Figma artwork, read `.agents/skills/figma-scene-rapid-prototyping/SKILL.md` before drawing. Follow its task-independent receive → plan → draw → review → refine/review (only when needed) → deliver lifecycle. The coordinator must include this requirement in each design Agent's shared assignment and check the final visual/quality result; a successful write is not a completed delivery. For timed runs, use the single-row-per-run `artifacts/figma-drawing-runs.csv` milestone schema. Do not substitute tool-call counts or a task-specific batch structure for the lifecycle.
+
 ## Restart the Figma plugin after plugin changes
 
 For every task changing `plugin/` runtime code: build, then restart **Figma MCP Bridge inside Figma**, then exercise the changed behavior. Follow `.agents/skills/figma-plugin-restart/SKILL.md`. A server restart or pre-existing WebSocket connection is not proof of a plugin restart.

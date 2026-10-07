@@ -32,12 +32,12 @@ python3 .agents/skills/ui-ux-pro-max/scripts/search.py "b2b enterprise saas clou
 ### 共用执行合同（两种模式均原样放入三个 Agent 的共享 context）
 
 ```text
-这是一次静态、可编辑的 Figma 登录页复测。协调者已经创建本轮测试任务容器，并为你分配其中一个 1440x960 子任务画板；你只能在该子任务画板及其后代节点内新增或修改内容，不得改动其他 agent、测试任务容器外或用户既有节点。始终传入本轮真实 fileKey，不要写死历史 session key。使用本仓库 .agents/skills/figma-scene-rapid-prototyping/SKILL.md 与 figma-product-designer 的相关工程、验收规则；使用任何 xd:// MCP 工具前先读其当前 schema。已有约束与运行时返回冲突时，以当前 schema/运行时为准并记录偏差。
+这是一次静态、可编辑的 Figma 登录页复测。协调者已经创建本轮测试任务容器，并为你分配其中一个 1440x960 子任务画板；你只能在该子任务画板及其后代节点内新增或修改内容，不得改动其他 agent、测试任务容器外或用户既有节点。始终传入本轮真实 fileKey，不要写死历史 session key。收到任务先读取本仓库 .agents/skills/figma-scene-rapid-prototyping/SKILL.md，并按其中通用的接收→构思→绘制初稿→检查→按问题微调/复查→交付 lifecycle 执行；另使用 figma-product-designer 的相关工程、验收规则。使用任何 xd:// MCP 工具前先读其当前 schema。已有约束与运行时返回冲突时，以当前 schema/运行时为准并记录偏差。
 
 优先 native Frame/Text/Rectangle + Auto Layout，整页需可编辑；只做必要的局部组件复用，不预建 component set / token 系统。协调者负责创建测试任务容器和三个子任务画板；Agent 不得另建替代根画板。create_scene 以已分配子任务画板为 parent，先 dryRun:true 预检，再以相同节点树 dryRun:false 写入。预检不创建节点；每批最多 100 节点、16 层，复杂画面可在本次子任务画板下分段写入。
 
-scene 的 ref 需唯一，推荐以字母开头且只用 ASCII 字母/数字/下划线。多行 TEXT 用 props.width、props.style.fontFamily、props.style.fontSize 和 props.style.textAutoResize:"HEIGHT"。字体以真实预检结果为准；FONT_STYLE_FALLBACK 必须记录 requested/resolved。不要将固定尺寸误称作响应式。画完及时保存唯一 PNG，读取实际截图；用 validate_layout 检查分配给你的子任务画板及其后代节点，并对可见问题做局部修复。不要为小瑕疵删除重建整张画板；如确需放弃，先报告原因并保留原产物以供诊断。超时/报错先读取已知节点确认状态，不直接重放。
-阶段计时：Agent 必须用同一 UTC wall clock 记录 `startedAt`、`taskCanvasAssignedAt`、`dryRunPassedAt`、`liveWriteAt`、`firstScreenshotAt`、`finalValidationAt`、`completedAt`；`taskCanvasAssignedAt` 由协调者记录实际分配完成时间，无法观察的字段写 `unknown`，禁止估算。协调者另外记录测试任务容器创建时间、三块子任务画板创建/分配时间、三 Agent 派发开始/结束和每个 task-result 到达时间。时间戳只证明阶段边界；不能从模型历史臆测单个 MCP 请求耗时。报告同时列 Agent 总耗时、并发波次耗时和缺失字段。
+scene 的 ref 需唯一，推荐以字母开头且只用 ASCII 字母/数字/下划线。多行 TEXT 用 props.width、props.style.fontFamily、props.style.fontSize 和 props.style.textAutoResize:"HEIGHT"。字体以真实预检结果为准；FONT_STYLE_FALLBACK 必须记录 requested/resolved。不要将固定尺寸误称作响应式。初稿完成后保存 PNG 并读取实际截图；用 validate_layout 检查分配给你的子任务画板及其后代节点。仅在发现问题时局部修复，再截图/复验；交付最终 PNG。不要为小瑕疵删除重建整张画板；如确需放弃，先报告原因并保留原产物以供诊断。超时/报错先读取已知节点确认状态，不直接重放。
+生命周期计时：协调者派发前记录 `taskSentAt`，收到最终结果后记录 `resultReceivedAt`；Agent 记录首次动作、方案完成、完整初稿、首次检查、最终检查和微调轮数。阶段 UTC 时刻必须在边界当场记录；未知填 `unknown`，不从工具历史补猜。报告里每个相对秒数以 `taskSentAt` 为零点，不能把 Agent 自报完成当作协调者收到结果；另报并发波次耗时及缺失字段。首次检查通过时微调轮数为 0，首次/最终检查时间相同；有问题则局部修复并复查，直到通过或如实失败。
 执行优化边界：可共享认证页的结构不变量（字段、主操作、恢复入口和画板尺寸），但不得共享开放探索的颜色、字体或构图。构造完整但克制的 scene 后预检；任何后加内容也必须预检，不要在失败的深层 scene JSON 上反复试错。装饰若不需要绝对定位，应放入 Auto Layout 父级；若必须绝对定位，先验证父级布局模式和运行时支持。成功 live 写入后先截图/诊断一次，仅在证据显示问题时做局部修复。
 
 每页必须有品牌 Forma、Email、Password、Forgot password?、Sign in、Create account。按钮、标签和输入边界可读；显示的是静态设计，不要声称登录/第三方授权/安全认证已实现。不得虚构真实安全认证、监管许可、活跃状态、客户数量、性能指标或第三方产品集成。需要视觉暗示时用纯装饰几何与明确的中性文本，不画假的 live 仪表盘。不要给未配置的链接伪造 URL。只报告真实工具结果：测试任务容器 ID、三个子任务画板 ID、截图相对路径、布局诊断结果、预检次数、真实写入次数、失败与 warning，以及未验证边界。跳过构建、lint、测试、格式化。
@@ -121,9 +121,9 @@ PNG: artifacts/login-benchmark/<RUN_ID>/03-enterprise-cloud.png。返回根节�
 | 01 机构金融 | <...> | <...> | <...> | <...> | <...> | <...> | <...> |
 | 02 疗愈生活方式 | <...> | <...> | <...> | <...> | <...> | <...> | <...> |
 | 03 企业云 | <...> | <...> | <...> | <...> | <...> | <...> | <...> |
-阶段耗时（UTC；未知填 `unknown`，不要从调用次数推算）：
-| Agent | startedAt | taskCanvasAssignedAt | dryRunPassedAt | liveWriteAt | firstScreenshotAt | finalValidationAt | completedAt | 总耗时 | 并发波次备注 |
-|---|---|---|---|---|---|---|---|---:|---|
+生命周期（每个 Agent 一行；累计秒均相对本 Agent 的 `taskSentAt`；未知留空，不补估）：
+| Agent | taskSentAt UTC | agentStarted_s | planDone_s | firstDraftDone_s | firstReviewDone_s | finalReviewDone_s | revisionCount | resultReceived_s | quality |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
 | 01 | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 | 02 | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 | 03 | ... | ... | ... | ... | ... | ... | ... | ... | ... |

@@ -3,6 +3,9 @@ artifacts
 # graphify
 graphify-out
 
+# Figma Painter working directories
+.figma-painter
+
 # Logs
 logs
 *.log
