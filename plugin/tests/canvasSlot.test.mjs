@@ -170,14 +170,42 @@ test("nearNodeId rejects not found node", async () => {
   );
 });
 
-test("multiple frames align to top baseline", async () => {
+test("multiple frames continue on the lowest active shelf", async () => {
   const frame1 = createFrame("1:1", 0, 100, 375, 812);
   const frame2 = createFrame("1:2", 500, 50, 375, 812);
   globalThis.figma = mockFigma([frame1, frame2]);
 
   const result = await findCanvasSlot({ width: 375, direction: "right" });
   assert.equal(result.x, 500 + 375 + 80);
-  assert.equal(result.y, 50); // aligned to topmost frame
+  assert.equal(result.y, 100); // continue on the lowest shelf
+});
+
+test("continues horizontally after wrapping to a new shelf", async () => {
+  const existing = createFrame("1:1", 0, 0, 4950, 812);
+  const first = createFrame("1:2", 0, 892, 375, 812);
+  globalThis.figma = mockFigma([existing, first]);
+
+  const result = await findCanvasSlot({ width: 375, direction: "right" });
+  assert.equal(result.x, 455);
+  assert.equal(result.y, 892);
+  assert.equal(result.strategy, "right_of_max_bounds");
+});
+
+test("calculates auto slots within a parent container", async () => {
+  const parent = createFrame("1:1", 0, 0, 1200, 800);
+  parent.children = [
+    createFrame("1:2", 0, 0, 400, 500),
+  ];
+  parent.children[0].parent = parent;
+  globalThis.figma = mockFigma([]);
+  const result = await findCanvasSlot(
+    { width: 400, height: 500, direction: "right" },
+    parent,
+  );
+  assert.deepEqual(
+    { x: result.x, y: result.y, strategy: result.strategy },
+    { x: 480, y: 0, strategy: "right_of_max_bounds" },
+  );
 });
 
 test("height defaults to width when omitted", async () => {

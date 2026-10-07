@@ -50,6 +50,7 @@ export async function findCanvasSlot(
   const direction = params.direction ?? "right";
   const spacing = params.spacing ?? DEFAULT_SPACING;
   const width = params.width;
+  const height = params.height ?? params.width;
 
   if (params.nearNodeId) {
     const targetNode = await figma.getNodeByIdAsync(params.nearNodeId);
@@ -71,7 +72,7 @@ export async function findCanvasSlot(
       });
     }
     const referenceBounds = { x: targetNode.x, y: targetNode.y, width: targetNode.width, height: targetNode.height };
-    const candidate = { x: targetNode.x + targetNode.width + spacing, y: targetNode.y, width, height: params.height ?? params.width };
+    const candidate = { x: targetNode.x + targetNode.width + spacing, y: targetNode.y, width, height };
     const collides = container.children.some((sibling) => {
       if (sibling === targetNode || sibling.type === "SLICE" || shouldExcludeNode(sibling)) return false;
       if (!("x" in sibling && "y" in sibling && "width" in sibling && "height" in sibling)) return false;
@@ -90,29 +91,44 @@ export async function findCanvasSlot(
   const bounds = collectBounds(container);
   if (bounds.length === 0) return { x: 0, y: 0, strategy: "empty_canvas" };
 
-  const maxX = Math.max(...bounds.map((bound) => bound.x + bound.width));
-  const maxY = Math.max(...bounds.map((bound) => bound.y + bound.height));
-  const topBaseline = Math.min(...bounds.map((bound) => bound.y));
-  if (direction === "right") {
-    if (maxX + spacing + width > MAX_X_THRESHOLD) {
-      return {
-        x: 0,
-        y: maxY + spacing,
-        strategy: "wrapped_to_new_row",
-        referenceBounds: { x: 0, y: 0, width: maxX, height: maxY },
-      };
-    }
+  const globalMaxY = Math.max(...bounds.map((b) => b.y + b.height));
+
+  if (direction === "bottom") {
     return {
-      x: maxX + spacing,
-      y: topBaseline,
-      strategy: "right_of_max_bounds",
-      referenceBounds: { x: 0, y: topBaseline, width: maxX, height: maxY - topBaseline },
+      x: 0,
+      y: globalMaxY + spacing,
+      strategy: "bottom_of_max_bounds",
+      referenceBounds: { x: 0, y: 0, width: Math.max(...bounds.map((b) => b.x + b.width)), height: globalMaxY },
     };
   }
+
+  // Shelf (Row) packing:
+  // Identify the lowest active row. A row is formed by items whose vertical span overlaps the bottom region.
+  // We sort frames by Y and group into rows, or find the frames on the lowest row.
+  // The lowest row starts at the Y of the frame that is closest to globalMaxY while accounting for height.
+  // Specifically: find all frames that touch or are near the bottom-most shelf.
+  const lowestY = Math.max(...bounds.map((b) => b.y));
+  // Items on this lowest shelf:
+  const lowestShelfFrames = bounds.filter((b) => Math.abs(b.y - lowestY) < 150);
+
+  const shelfMaxX = Math.max(...lowestShelfFrames.map((b) => b.x + b.width));
+  const shelfY = lowestShelfFrames[0].y;
+
+  // Check if current shelf has space
+  if (shelfMaxX + spacing + width <= MAX_X_THRESHOLD) {
+    return {
+      x: shelfMaxX + spacing,
+      y: shelfY,
+      strategy: "right_of_max_bounds",
+      referenceBounds: { x: 0, y: shelfY, width: shelfMaxX, height: Math.max(...lowestShelfFrames.map((b) => b.height)) },
+    };
+  }
+
+  // Current shelf is full (> MAX_X_THRESHOLD), wrap to brand new row below all existing content
   return {
     x: 0,
-    y: maxY + spacing,
-    strategy: "bottom_of_max_bounds",
-    referenceBounds: { x: 0, y: 0, width: maxX, height: maxY },
+    y: globalMaxY + spacing,
+    strategy: "wrapped_to_new_row",
+    referenceBounds: { x: 0, y: 0, width: Math.max(...bounds.map((b) => b.x + b.width)), height: globalMaxY },
   };
 }
