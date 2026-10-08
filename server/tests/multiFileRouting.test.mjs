@@ -63,6 +63,7 @@ test("all MCP tool schemas accept optional fileKey", () => {
     "apply_tokens",
     "get_screenshot",
     "save_screenshots",
+    "find_canvas_slot",
     "migrate_component_set",
     "repair_component_set",
     "clone_component_set",

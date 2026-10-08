@@ -119,6 +119,14 @@ export function registerTools(server: McpServer, node: Node): void {
     async ({ fileKey, ...params }): Promise<ToolResult> =>
       renderResponse(() => node.sendWithParams("validate_layout", undefined, params, fileKey))
   );
+  server.tool(
+    "find_canvas_slot",
+    "Calculate a vacant position on the canvas for a new frame with the given dimensions. Read-only; does not modify Figma. Returns collision-free x/y coordinates, the strategy used, and reference bounds when applicable.",
+    toolInputSchemas.find_canvas_slot.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("find_canvas_slot", undefined, params, fileKey))
+  );
+
 
   server.tool(
     "list_files",

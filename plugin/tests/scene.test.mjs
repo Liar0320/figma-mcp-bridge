@@ -221,3 +221,34 @@ test("font resolver reports every attempted candidate when resolution fails", as
     },
   );
 });
+
+
+test("create_scene auto-position reports plan without mutating and applies it on creation", async () => {
+  globalThis.figma = mockSceneFigma();
+  const existing = globalThis.figma.createFrame();
+  existing.x = 20;
+  existing.y = 40;
+  existing.width = 300;
+  existing.height = 500;
+  globalThis.figma.currentPage.appendChild(existing);
+  const nodes = [{ ref: "root", type: "FRAME", props: { width: 240, height: 320 } }];
+  const dry = await createScene({ position: "auto", nodes, dryRun: true });
+  assert.deepEqual(dry.plannedPosition, { x: 400, y: 40, strategy: "right_of_max_bounds" });
+  assert.equal(globalThis.figma.currentPage.children.length, 1);
+  const live = await createScene({ position: "auto", nodes, dryRun: false });
+  const created = await globalThis.figma.getNodeByIdAsync(live.refs.root);
+  assert.equal(created.x, 400);
+  assert.equal(created.y, 40);
+});
+
+test("create_scene auto-position rejects explicit coordinates and non-frame roots", async () => {
+  globalThis.figma = mockSceneFigma();
+  await assert.rejects(
+    () => createScene({ position: "auto", nodes: [{ ref: "root", type: "FRAME", props: { x: 12 } }] }),
+    /cannot be combined/
+  );
+  await assert.rejects(
+    () => createScene({ position: "auto", nodes: [{ ref: "root", type: "RECTANGLE" }] }),
+    /exactly one root FRAME/
+  );
+});
