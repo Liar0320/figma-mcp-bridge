@@ -39,7 +39,6 @@ const replacements = [
   ],
   [new URL("../dist-test/src/main/write.js", import.meta.url), [['"./componentMigration"', '"./componentMigration.js"'], ['"./canvasSlot"', '"./canvasSlot.js"']]],
   [new URL("../dist-test/src/main/scene.js", import.meta.url), [['"./write"', '"./write.js"'], ['"./canvasSlot"', '"./canvasSlot.js"']]],
-  [new URL("../dist-test/src/main/textMeasurement.js", import.meta.url), [['"./write"', '"./write.js"']]],
 ];
 
 for (const [filePath, fileReplacements] of replacements) {
