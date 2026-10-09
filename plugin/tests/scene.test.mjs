@@ -116,19 +116,45 @@ test("valid layout combinations preflight and render with native parent/child st
   assert.equal((await globalThis.figma.getNodeByIdAsync(result.refs.child)).parent.id, result.refs.parent);
 });
 
-test("FILL dependency and HUG conflict retain existing validation", async () => {
-  globalThis.figma = mockSceneFigma();
-  const child = { ref: "child", type: "FRAME", props: { layoutSizingHorizontal: "FILL" } };
-  for (const [mode, sizing, message] of [
-    ["NONE", undefined, /requires auto-layout parent/],
-    ["VERTICAL", undefined, /axis incompatible/],
-    ["HORIZONTAL", "HUG", /conflicts with parent HUG/],
-  ]) {
-    await assert.rejects(() => createScene({ nodes: [{ ...frame(mode, child), props: { ...frame(mode).props, layoutSizingHorizontal: sizing } }] }), message);
-    assert.equal(globalThis.figma.currentPage.children.length, 0);
+test("FILL on either axis works under either auto-layout direction", async () => {
+  for (const mode of ["HORIZONTAL", "VERTICAL"]) {
+    for (const axis of ["Horizontal", "Vertical"]) {
+      globalThis.figma = mockSceneFigma();
+      const child = { ref: "child", type: "FRAME", props: { [`layoutSizing${axis}`]: "FILL" } };
+      const nodes = [frame(mode, child)];
+      const preview = await createScene({ nodes, dryRun: true });
+      assert.equal(preview.nodeCount, 2);
+      assert.equal(globalThis.figma.currentPage.children.length, 0);
+      const result = await createScene({ nodes, dryRun: false });
+      const parent = await globalThis.figma.getNodeByIdAsync(result.refs.parent);
+      const created = await globalThis.figma.getNodeByIdAsync(result.refs.child);
+      assert.equal(parent.layoutMode, mode);
+      assert.equal(created.parent, parent);
+      assert.equal(created[`layoutSizing${axis}`], "FILL");
+    }
   }
-  const accepted = await createScene({ nodes: [frame("HORIZONTAL", child)], dryRun: true });
-  assert.equal(accepted.nodeCount, 2);
+});
+
+test("FILL still requires auto-layout and rejects parent HUG on the same axis", async () => {
+  for (const axis of ["Horizontal", "Vertical"]) {
+    for (const [mode, sizing, message] of [
+      ["NONE", undefined, /requires auto-layout parent/],
+      ["HORIZONTAL", "HUG", /conflicts with parent HUG/],
+      ["VERTICAL", "HUG", /conflicts with parent HUG/],
+    ]) {
+      globalThis.figma = mockSceneFigma();
+      const child = { ref: "child", type: "FRAME", props: { [`layoutSizing${axis}`]: "FILL" } };
+      const nodes = [{ ...frame(mode, child), props: { ...frame(mode).props, [`layoutSizing${axis}`]: sizing } }];
+      for (const dryRun of [true, false]) {
+        await assert.rejects(() => createScene({ nodes, dryRun }), (error) => {
+          assert.equal(error.mutationError?.code, "INVALID_INPUT");
+          assert.match(error.message, message);
+          return true;
+        });
+        assert.equal(globalThis.figma.currentPage.children.length, 0);
+      }
+    }
+  }
 });
 
 test("scene parent resolution accepts current PAGE and frame, rejects invalid or out-of-scope targets", async () => {
