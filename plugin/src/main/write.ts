@@ -115,7 +115,7 @@ function getOptionalString(value: unknown): string | undefined {
 
 /** Reads a required numeric field from untyped RPC params. */
 function getNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || Number.isNaN(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     fail("INVALID_INPUT", `${field} must be a number`);
   }
   return value;
@@ -2417,7 +2417,7 @@ function resolveParams(
   );
 }
 
-const CREATION_WRITE_TYPES = new Set(["create_frame", "create_component", "create_text", "create_rectangle", "create_instance"]);
+const CREATION_WRITE_TYPES = new Set(["create_frame", "create_component", "create_text", "create_rectangle", "create_instance", "create_icon"]);
 
 /** Handles both single write requests and ordered batch mutations from the server. */
 export async function handleWriteRequest(

@@ -147,6 +147,7 @@ const nodeName = z
 
 export const batchOperationType = z.enum([
   "create_frame",
+  "create_icon",
   "create_component",
   "create_instance",
   "swap_instance_component",

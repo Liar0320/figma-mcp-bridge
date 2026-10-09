@@ -17,6 +17,7 @@ test("create_icon rejects malformed node IDs and colors", () => {
   assert.equal(toolInputSchemas.create_icon.safeParse({ name: "activity", parentId: "1-2" }).success, false);
   assert.equal(toolInputSchemas.create_icon.safeParse({ name: "activity", color: "blue" }).success, false);
   assert.equal(validateRpc("create_icon", undefined, { name: "activity" }), null);
+  assert.equal(toolInputSchemas.batch_mutation.safeParse({ operations: [{ type: "create_icon", params: { svg: "<svg></svg>" } }] }).success, true);
 });
 
 test("resolveIconifyIcon validates and returns an Iconify SVG", async () => {
