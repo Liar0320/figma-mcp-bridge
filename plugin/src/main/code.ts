@@ -30,6 +30,7 @@ import { findCanvasSlot } from "./canvasSlot";
 
 type RequestType =
   | "create_scene"
+  | "create_icon"
   | "measure_text"
   | "validate_layout"
   | "inspect_component_set"
@@ -133,6 +134,13 @@ type ServerRequest = {
     componentSetId?: string;
     targetComponentSetId?: string;
     instanceIds?: string[];
+    svg?: string;
+    iconSet?: string;
+    nodeName?: string;
+    size?: number;
+    color?: string;
+    x?: number;
+    y?: number;
     parentId?: string;
     name?: string;
     cloneBeforeMutate?: boolean;
@@ -652,6 +660,12 @@ const handleRequest = async (
           type: request.type,
           requestId: request.requestId,
           data: await createScene(request.params as Record<string, unknown> | undefined),
+        };
+      case "create_icon":
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: await handleWriteRequest(request.type, request.nodeIds, request.params as Record<string, unknown> | undefined),
         };
       case "measure_text":
         return {

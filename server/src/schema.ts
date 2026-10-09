@@ -342,6 +342,17 @@ const layoutIssueCode = z.enum([
 ]);
 
 export const toolInputSchemas = {
+  create_icon: withFileKey({
+    iconSet: z.string().min(1).max(64).optional().default("lucide").describe("Iconify icon set prefix. Defaults to lucide."),
+    name: z.string().min(1).max(128).describe("Icon name within the Iconify icon set, for example activity or arrow-right."),
+    size: z.number().finite().positive().max(4096).optional().default(24),
+    color: hexColor.optional().describe("Optional replacement for SVG currentColor."),
+    parentId: figmaNodeId.optional(),
+    x: z.number().finite().optional(),
+    y: z.number().finite().optional(),
+    nodeName: z.string().min(1).max(200).optional(),
+    dryRun: z.boolean().optional().default(true).describe("Preview only by default; false creates the Figma node."),
+  }).strict(),
   create_scene: withFileKey({
     parentId: figmaNodeId.optional().describe("Omit for current page, or specify the current PAGE ID or a container on that page; other pages are out of scope."),
     nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE and NONE-layout parents fail preflight."),
@@ -832,6 +843,7 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  create_icon: (_nodeIds, params) => ({ ...params }),
   create_scene: (_nodeIds, params) => ({ ...params }),
   measure_text: (_nodeIds, params) => ({ ...params }),
   validate_layout: (_nodeIds, params) => ({ ...params }),

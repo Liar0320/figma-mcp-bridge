@@ -82,6 +82,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
 | `find_canvas_slot` | Read-only canvas placement query; returns a vacant x/y slot for given dimensions, direction, spacing, and optional reference node |
 | `create_frame` | Create a frame on the current page |
+| `create_icon` | Resolve an Iconify icon (default set: `lucide`) and create an editable SVG node; dry-run by default |
 | `create_component` | Create a first-class Figma Component on the current page |
 | `create_instance` | Create an Instance from a local Component by `componentId` |
 | `combine_as_variants` | Combine two or more local Components into a native Figma Component Set / variants node |

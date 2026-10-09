@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Node } from "./node.js";
 import { toolInputSchemas } from "./schema.js";
 import type { BridgeResponse } from "./types.js";
+import { resolveIconifyIcon } from "./iconify.js";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -66,6 +67,7 @@ type WriteToolName = keyof Pick<
   | "split_component_set"
   | "migrate_instances"
   | "reconcile_component_set"
+  | "create_icon"
   | "create_frame"
   | "create_component"
   | "create_instance"
@@ -98,6 +100,26 @@ type WriteToolName = keyof Pick<
 
 /** Registers all read and write MCP tools exposed by the bridge server. */
 export function registerTools(server: McpServer, node: Node): void {
+  server.tool(
+    "create_icon",
+    "Resolve an icon from Iconify and create it as an editable Figma SVG node. Defaults to the lucide icon set and dry-run; set dryRun=false to mutate Figma.",
+    toolInputSchemas.create_icon.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> => renderResponse(async () => {
+      const resolved = await resolveIconifyIcon(params.iconSet, params.name);
+      const base = {
+        iconSet: resolved.iconSet,
+        name: resolved.name,
+        source: "iconify",
+        sourceUrl: resolved.sourceUrl,
+        size: params.size ?? 24,
+        ...(params.color ? { color: params.color } : {}),
+        dryRun: params.dryRun !== false,
+      };
+      if (params.dryRun !== false) return { type: "create_icon", requestId: "", data: base };
+      const response = await node.sendWithParams("create_icon", undefined, { ...params, svg: resolved.svg }, fileKey);
+      return { ...response, data: { ...base, ...(response.data as Record<string, unknown>) } };
+    })
+  );
   server.tool(
     "create_scene",
     "Preflight and create a nested editable Frame/Text/Rectangle/Instance scene with native Auto Layout. Defaults to dry-run; dryRun=false creates nodes. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE or NONE-layout parents return INVALID_LAYOUT_DEPENDENCY in preflight. The optional parentId may reference the current PAGE or a container on it. Validates fonts, refs and component dependencies first; failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels.",
