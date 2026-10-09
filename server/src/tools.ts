@@ -122,10 +122,19 @@ export function registerTools(server: McpServer, node: Node): void {
   );
   server.tool(
     "create_scene",
-    "Preflight and create a nested editable Frame/Text/Rectangle/Instance scene with native Auto Layout. Defaults to dry-run; dryRun=false creates nodes. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE or NONE-layout parents return INVALID_LAYOUT_DEPENDENCY in preflight. The optional parentId may reference the current PAGE or a container on it. Validates fonts, refs and component dependencies first; failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels.",
+    "Preflight and create nested editable Frame/Text/Rectangle/Instance/Icon scenes with native Auto Layout. ICON resolves from Iconify before plugin preflight and creates an editable SVG on live execution. Defaults to dry-run; dryRun=false creates nodes. The optional parentId may reference the current PAGE or a container on it. Failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels. Iconify SVG validation is limited to response shape, not a complete SVG security audit.",
     toolInputSchemas.create_scene.shape,
-    async ({ fileKey, ...params }): Promise<ToolResult> =>
-      renderResponse(() => node.sendWithParams("create_scene", undefined, params, fileKey))
+    async ({ fileKey, ...params }): Promise<ToolResult> => renderResponse(async () => {
+      const resolveNodes = async (nodes: typeof params.nodes): Promise<typeof params.nodes> => Promise.all(nodes.map(async (node) => {
+        if (node.type === "ICON") {
+          const props = node.props as { iconSet?: string; name: string; size?: number; color?: string; nodeName?: string; x?: number; y?: number };
+          const icon = await resolveIconifyIcon(props.iconSet, props.name);
+          return { ...node, props: { ...props, iconSet: icon.iconSet, svg: icon.svg } };
+        }
+        return node.children ? { ...node, children: await resolveNodes(node.children) } : node;
+      }));
+      return node.sendWithParams("create_scene", undefined, { ...params, nodes: await resolveNodes(params.nodes) }, fileKey);
+    })
   );
   server.tool(
     "measure_text",

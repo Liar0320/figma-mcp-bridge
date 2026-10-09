@@ -33,6 +33,7 @@ function mockSceneFigma() {
   return {
     currentPage: page, document,
     createFrame: () => node("FRAME"),
+    createNodeFromSvg(svg) { const icon = node("FRAME"); icon.svg = svg; return icon; },
     createRectangle: () => node("RECTANGLE"),
     async getNodeByIdAsync(id) { return registry.get(id) ?? null; },
     async loadFontAsync() {},
@@ -202,6 +203,14 @@ test("dry run is side effect free and reports planned refs", async () => {
   assert.equal(result.dryRun, true);
   assert.deepEqual(result.createdNodeIds, []);
   assert.deepEqual(result.refs.map((x) => x.ref), ["root", "label"]);
+});
+
+test("ICON scene dry-run validates resolved SVG without creating nodes", async () => {
+  globalThis.figma = mockSceneFigma();
+  const result = await createScene({ dryRun: true, nodes: [{ ref: "icon", type: "ICON", props: { name: "activity", iconSet: "lucide", size: 24, svg: "<svg></svg>" } }] });
+  assert.equal(result.dryRun, true);
+  assert.deepEqual(result.createdNodeIds, []);
+  assert.deepEqual(result.refs, [{ ref: "icon", type: "ICON" }]);
 });
 
 test("font style aliases normalize and resolve in deterministic order", async () => {

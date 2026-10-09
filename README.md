@@ -107,7 +107,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `set_node_name` | Rename an existing Figma node |
 | `rename_node` | Alias for `set_node_name` |
 | `delete_node` | Delete a node |
-| `create_scene` | Declaratively preflight or create nested Frame/Text/Rectangle/Instance scenes; defaults to dry-run and enforces bounded refs, depth, and node counts |
+| `create_scene` | Declaratively preflight or create nested Frame/Text/Rectangle/Instance/Icon scenes; ICON nodes resolve Iconify SVGs (default set: `lucide`) and become editable SVG nodes; defaults to dry-run and enforces bounded refs, depth, and node counts |
 | `measure_text` | Measure text with Figma-native fonts and dimensions; temporary measurement nodes are cleaned up on success or failure |
 | `validate_layout` | Read-only bounded diagnostics for explicit roots: bounds, clipping, truncation, text overlap, touch targets, and deterministic contrast |
 | `batch_mutation` | Execute up to 100 write operations in order, with temporary refs for multi-step generation |
@@ -119,6 +119,19 @@ Use `find_canvas_slot` before designing to query a position without reading the 
 
 
 Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes, creating local `componentId` instances, combining two or more existing local Components into a native `COMPONENT_SET` via `combine_as_variants` (`componentIds`, optional `parentId`, `name`, `x`, `y`, `key`), managing variant names/properties on components inside a component set, managing component property definitions, setting instance component properties, and toggling exposed nested instances. `set_variant_properties` updates variants by renaming the target component to Figma's `Property=Value` syntax; `manage_component_properties` follows Figma Plugin API limits (for example, deleting `VARIANT` definitions is not supported by Figma). `set_exposed_instance` also follows Figma's native eligibility rules: the target must be an eligible nested instance inside a component/component set and may need exposed nested instances or children with component property references. Remote library import by component key remains out of scope for this pass.
+Example ICON scene (Iconify resolution happens during both dry-run and live execution; SVG trust validation is limited to Iconify response shape):
+
+```json
+{
+  "nodes": [{
+    "ref": "card",
+    "type": "FRAME",
+    "props": { "width": 240, "height": 120, "layoutMode": "HORIZONTAL", "padding": { "top": 16, "right": 16, "bottom": 16, "left": 16 } },
+    "children": [{ "ref": "activityIcon", "type": "ICON", "props": { "name": "activity", "size": 24, "color": "#3D6DFF" } }]
+  }],
+  "dryRun": true
+}
+```
 
 `create_component_set` accepts an optional `visualTemplate` for deterministic visual generation. The template can provide `typeStyles`, `stateStyles`, `sizeStyles`, `iconStyles`, and `typography`; color values use six-digit hex strings and `{state}` resolves the active state color. `layoutMode`, `primaryAxisAlignItems`, `counterAxisAlignItems`, and `gap` may be provided at the template root. For a target named `Button`, omitting `visualTemplate` uses built-in styles: Primary state fills are `#3D6DFF` / `#6691FF` / `#294FD9` / disabled opacity `0.3`; Ghost uses a 1px state-colored stroke; Text uses state-colored text. Small/Medium/Large are `32/44/52px` high with `16/22/28px` horizontal and `6/10/12px` vertical padding, `20/1000/32px` radius, and `14/16/20px` Inter Semi Bold typography with `20/24/28px` line heights. Variants are laid out in a deterministic non-overlapping grid, sized from label content plus padding and optional 18px vector arrow geometry (`Right=0°`, `Up=90°`, `None` hidden). `Label` TEXT binds to label content. Prefer the `Icon` dimension (`None` / `Right` / `Up`) to control the optional arrow; use the legacy `Show Icon` BOOLEAN only for targets without an `Icon` dimension. Creation runs a postflight schema and visual invariant check; failures roll back only nodes created by that request. Dry-run remains non-mutating; native INSTANCE_SWAP icon properties are intentionally not synthesized until a safe source component is available.
 For built-in `Button` variants, the horizontal main axis uses Hug contents (`AUTO`) unless a visual template specifies a fixed width. Labels and optional icons determine button width. Use `set_layout_mode` with `primaryAxisSizingMode: "FIXED"` when equal-width buttons are required. Creation postflight validates the sizing mode and skips fixed-width equality checks for Hug variants.

@@ -62,6 +62,14 @@ test("canvas slot and automatic frame placement schemas enforce supported bounds
   assert.equal(toolInputSchemas.create_frame.safeParse({ position: "auto" }).success, true);
 });
 
+test("create_scene accepts ICON nodes with bounded Iconify props", () => {
+  const result = toolInputSchemas.create_scene.safeParse({
+    nodes: [{ ref: "icon", type: "ICON", props: { name: "activity", size: 20, color: "#3D6DFF" } }],
+  });
+  assert.equal(result.success, true);
+  if (result.success) assert.equal(result.data.nodes[0].props.iconSet, "lucide");
+});
+
 test("measurement rejects zero or infinite widths and unsupported auto-resize overrides", () => {
   for (const item of [
     { characters: "Long label", width: 0 },
