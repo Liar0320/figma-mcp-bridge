@@ -115,7 +115,7 @@ function getOptionalString(value: unknown): string | undefined {
 
 /** Reads a required numeric field from untyped RPC params. */
 function getNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || Number.isNaN(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     fail("INVALID_INPUT", `${field} must be a number`);
   }
   return value;
@@ -496,6 +496,15 @@ export function validateWriteToolParams(
       if (params?.itemSpacing !== undefined) getNumber(params.itemSpacing, "itemSpacing");
       if (params?.padding !== undefined) validatePaddingObject(params.padding, "padding");
       if (params) validateLayoutProperties(params, true);
+      return;
+    case "create_icon":
+      getString(params?.svg, "svg");
+      getOptionalFigmaNodeId(params?.parentId, "parentId");
+      getOptionalNonEmptyString(params?.nodeName, "nodeName");
+      if (params?.size !== undefined) getPositiveNumber(params.size, "size");
+      if (params?.x !== undefined) getNumber(params.x, "x");
+      if (params?.y !== undefined) getNumber(params.y, "y");
+      if (params?.color !== undefined && (typeof params.color !== "string" || !/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(params.color))) fail("INVALID_INPUT", "color must be #RRGGBB or #RRGGBBAA");
       return;
     case "create_instance":
       getFigmaNodeId(params?.componentId, "componentId");
@@ -1029,6 +1038,26 @@ async function createFrame(params: RequestParams): Promise<MutationResult> {
     }
     parent.appendChild(node);
     applyLayoutProperties(node, params);
+    return toMutationResult(node, params?.compact === false);
+  } catch (error) {
+    node.remove();
+    throw error;
+  }
+}
+
+/** Creates an editable Figma node from a resolved Iconify SVG payload. */
+async function createIcon(params: RequestParams): Promise<MutationResult> {
+  const rawSvg = getString(params?.svg, "svg");
+  const size = typeof params?.size === "number" ? params.size : 24;
+  const color = typeof params?.color === "string" ? params.color : undefined;
+  const node = figma.createNodeFromSvg(color ? rawSvg.replace(/currentColor/gi, color) : rawSvg);
+  try {
+    node.name = getOptionalString(params?.nodeName) ?? `${getOptionalString(params?.iconSet) ?? "lucide"}:${getOptionalString(params?.name) ?? "icon"}`;
+    node.resize(size, size);
+    if (params?.x !== undefined) node.x = getNumber(params.x, "x");
+    if (params?.y !== undefined) node.y = getNumber(params.y, "y");
+    const parent = await getParentNode(getOptionalString(params?.parentId));
+    parent.appendChild(node);
     return toMutationResult(node, params?.compact === false);
   } catch (error) {
     node.remove();
@@ -2281,6 +2310,8 @@ async function executeWrite(type: string, nodeIds: string[] | undefined, params:
       return createFrame(params);
     case "create_component":
       return createComponent(params);
+    case "create_icon":
+      return createIcon(params);
     case "create_instance":
       return createInstance(params);
     case "swap_instance_component":
@@ -2386,7 +2417,7 @@ function resolveParams(
   );
 }
 
-const CREATION_WRITE_TYPES = new Set(["create_frame", "create_component", "create_text", "create_rectangle", "create_instance"]);
+const CREATION_WRITE_TYPES = new Set(["create_frame", "create_component", "create_text", "create_rectangle", "create_instance", "create_icon"]);
 
 /** Handles both single write requests and ordered batch mutations from the server. */
 export async function handleWriteRequest(
