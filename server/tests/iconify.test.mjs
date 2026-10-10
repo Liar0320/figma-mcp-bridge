@@ -20,17 +20,42 @@ test("create_icon rejects malformed node IDs and colors", () => {
   assert.equal(toolInputSchemas.batch_mutation.safeParse({ operations: [{ type: "create_icon", params: { svg: "<svg></svg>" } }] }).success, true);
 });
 
-test("resolveIconifyIcon validates and returns an Iconify SVG", async () => {
+test("bundled Lucide resolution is offline and reports bundled source", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response('<svg viewBox="0 0 24 24"></svg>', {
-    status: 200,
-    headers: { "content-type": "image/svg+xml" },
-  })) ;
+  globalThis.fetch = async () => { throw new Error("network must not be used"); };
   try {
-    const icon = await resolveIconifyIcon("lucide", "activity");
+    const icon = await resolveIconifyIcon("lucide", "activity", { sourceMode: "bundled" });
+    assert.equal(icon.source, "bundled");
+    assert.equal(icon.sourceUrl, undefined);
+    assert.match(icon.svg, /currentColor/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("bundled mode fails clearly for unknown icons without fetching", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network must not be used"); };
+  try { await assert.rejects(() => resolveIconifyIcon("lucide", "not-a-real-icon", { sourceMode: "bundled" }), /Bundled icon not found/); }
+  finally { globalThis.fetch = originalFetch; }
+});
+
+test("remote mode preserves Iconify URL and validation", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('<svg viewBox="0 0 24 24"></svg>', { status: 200 });
+  try {
+    const icon = await resolveIconifyIcon("lucide", "activity", { sourceMode: "remote" });
+    assert.equal(icon.source, "remote");
     assert.equal(icon.sourceUrl, "https://api.iconify.design/lucide/activity.svg");
     assert.match(icon.svg, /^<svg/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("fallback mode uses remote Iconify when bundle misses", async () => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  globalThis.fetch = async (url) => { requested = String(url); return new Response('<svg viewBox="0 0 24 24"></svg>', { status: 200 }); };
+  try {
+    const icon = await resolveIconifyIcon("lucide", "not-a-real-icon", { sourceMode: "fallback" });
+    assert.equal(icon.source, "remote");
+    assert.equal(requested, "https://api.iconify.design/lucide/not-a-real-icon.svg");
+  } finally { globalThis.fetch = originalFetch; }
 });

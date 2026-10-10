@@ -71,7 +71,7 @@ export async function resolveFontDescriptor(
 
 const SIZE_KEYS = ["layoutSizingHorizontal","layoutSizingVertical","primaryAxisSizingMode","counterAxisSizingMode","minWidth","maxWidth","minHeight","maxHeight"];
 const CONTAINER = ["name","x","y","width","height","fills","strokes","cornerRadius","clipsContent","padding","itemSpacing",...LAYOUT];
-const ALLOWED: Record<NodeType,string[]> = { FRAME: CONTAINER, TEXT:["name","x","y","width","height","characters","style","fills",...LAYOUT], RECTANGLE:["name","x","y","width","height","fills","strokes","cornerRadius",...LAYOUT], INSTANCE:["name","x","y","width","height","componentId","properties",...LAYOUT], ICON:["iconSet","name","size","color","nodeName","x","y","svg"] };
+const ALLOWED: Record<NodeType,string[]> = { FRAME: CONTAINER, TEXT:["name","x","y","width","height","characters","style","fills",...LAYOUT], RECTANGLE:["name","x","y","width","height","fills","strokes","cornerRadius",...LAYOUT], INSTANCE:["name","x","y","width","height","componentId","properties",...LAYOUT], ICON:["iconSet","name","size","color","nodeName","x","y","svg","source","sourceUrl"] };
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 function fail(message:string, code="INVALID_INPUT", details?:unknown): never { throw Object.assign(new Error(message), { mutationError:{ code, message, details } }); }
 const writeType = (t:NodeType) => ({FRAME:"create_frame",TEXT:"create_text",RECTANGLE:"create_rectangle",INSTANCE:"create_instance",ICON:"create_icon"}[t]);
