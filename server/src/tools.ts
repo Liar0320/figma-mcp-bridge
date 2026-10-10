@@ -6,6 +6,7 @@ import type { Node } from "./node.js";
 import { toolInputSchemas } from "./schema.js";
 import type { BridgeResponse } from "./types.js";
 import { resolveIconifyIcon } from "./iconify.js";
+import type { ResolvedIcon } from "./iconify.js";
 
 type SceneNodePayload = {
   type: string;
@@ -33,6 +34,43 @@ export async function resolveSceneIcons(nodes: SceneNodePayload[]): Promise<Scen
     if (!node.children) return node;
     return { ...node, children: await resolveSceneIcons(node.children) };
   }));
+}
+export async function resolveBatchIcons(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const operations = params.operations;
+  if (!Array.isArray(operations)) return params;
+  const resolutionCache: Record<string, Promise<ResolvedIcon>> = {};
+  const resolvedOperations = await Promise.all(operations.map(async (operation) => {
+    if (!operation || typeof operation !== "object") return operation;
+    const candidate = operation as Record<string, unknown>;
+    if (candidate.type !== "create_icon" || !candidate.params || typeof candidate.params !== "object") return operation;
+    const iconParams = candidate.params as Record<string, unknown>;
+    if (typeof iconParams.svg === "string") return operation;
+    const iconSet = typeof iconParams.iconSet === "string" ? iconParams.iconSet : undefined;
+    const name = typeof iconParams.name === "string" ? iconParams.name : "";
+    const cacheKey = `${iconSet ?? "lucide"}:${name}`;
+    let resolution = resolutionCache[cacheKey];
+    if (!resolution) {
+      resolution = resolveIconifyIcon(iconSet, name);
+      resolutionCache[cacheKey] = resolution;
+    }
+    try {
+      const icon = await resolution;
+      return {
+        ...candidate,
+        params: {
+          ...iconParams,
+          iconSet: icon.iconSet,
+          name: icon.name,
+          svg: icon.svg,
+          source: icon.source,
+          ...(icon.sourceUrl ? { sourceUrl: icon.sourceUrl } : {}),
+        },
+      };
+    } catch {
+      return operation;
+    }
+  }));
+  return { ...params, operations: resolvedOperations };
 }
 
 type ToolResult = {
@@ -600,9 +638,10 @@ export function registerTools(server: McpServer, node: Node): void {
     "Find nodes on the current page by default, or across all pages / a specific page with optional type, name matching, hidden-node, and limit filters. Returns compact match metadata by default; compact=false includes serialized node trees.",
     (args, fileKey) => node.sendWithParams("find_nodes", undefined, args, fileKey)
   );
-  registerWriteTool("batch_mutation", "Execute up to 100 writes in order. Compact receipts are the default; compact=false includes per-step results. Atomic failure removes only nodes created by this batch, not prior mutations to existing nodes.", (args, fileKey) =>
-    node.sendWithParams("batch_mutation", undefined, args, fileKey)
-  );
+  registerWriteTool("batch_mutation", "Execute up to 100 writes in order. Compact receipts are the default; compact=false includes per-step results. Atomic failure removes only nodes created by the failed batch, not prior mutations to existing nodes.", async (args, fileKey) => {
+    const resolvedArgs = node.roleName === "LEADER" ? await resolveBatchIcons(args) : args;
+    return node.sendWithParams("batch_mutation", undefined, resolvedArgs, fileKey);
+  });
 
   registerWriteTool("set_position", "Set node position.", ({ nodeId, ...args }, fileKey) =>
     node.sendWithParams("set_position", [String(nodeId)], args, fileKey)

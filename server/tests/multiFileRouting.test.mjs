@@ -191,6 +191,43 @@ test("follower ICON scene reaches plugin with resolved SVG", async () => {
 });
 
 
+test("follower batch ICON operations resolve bundled SVG once and preserve inline SVG", async () => {
+  const leader = new Leader(0);
+  const originalFetch = globalThis.fetch;
+  const originalSource = process.env.FIGMA_BRIDGE_ICON_SOURCE;
+  let iconFetchCount = 0;
+  process.env.FIGMA_BRIDGE_ICON_SOURCE = "bundled";
+  globalThis.fetch = async (url, options) => {
+    if (String(url).startsWith("https://api.iconify.design/")) {
+      iconFetchCount += 1;
+      throw new Error("network must not be used");
+    }
+    return originalFetch(url, options);
+  };
+  try {
+    await leader.start();
+    const socket = attach(leader.getBridge(), "file-a", "File A");
+    const follower = new Follower(`http://localhost:${leader.server.address().port}`);
+    const inlineSvg = "<svg viewBox=\"0 0 1 1\"></svg>";
+    await follower.sendWithParams("batch_mutation", undefined, {
+      failureMode: "atomic",
+      operations: [
+        { type: "create_icon", ref: "tmp:bundled", params: { name: "activity" } },
+        { type: "create_icon", ref: "tmp:inline", params: { svg: inlineSvg, name: "inline" } },
+      ],
+    }, "file-a");
+    assert.equal(iconFetchCount, 0);
+    const operations = socket.lastRequest.params.operations;
+    assert.match(operations[0].params.svg, /^<svg/);
+    assert.equal(operations[0].params.source, "bundled");
+    assert.equal(operations[1].params.svg, inlineSvg);
+  } finally {
+    leader.stop();
+    globalThis.fetch = originalFetch;
+    if (originalSource === undefined) delete process.env.FIGMA_BRIDGE_ICON_SOURCE;
+    else process.env.FIGMA_BRIDGE_ICON_SOURCE = originalSource;
+  }
+});
 test("component migration schemas enforce deterministic inputs", () => {
   const migrate = toolInputSchemas.migrate_component_set;
   assert.doesNotThrow(() => migrate.parse({ componentSetId: "1:2", dryRun: true, cloneBeforeMutate: true, dimensions: [{ action: "rename", name: "State", newName: "Mode" }] }));

@@ -2,9 +2,9 @@ import http from "node:http";
 import type { Duplex } from "node:stream";
 import { Bridge } from "./bridge.js";
 import { validateRpc } from "./schema.js";
-import { executeSaveScreenshots, resolveSceneIcons } from "./tools.js";
-import { resolveIconifyIcon } from "./iconify.js";
+import { executeSaveScreenshots, resolveBatchIcons, resolveSceneIcons } from "./tools.js";
 import type { ExportFormat } from "./tools.js";
+import { resolveIconifyIcon } from "./iconify.js";
 import type { RPCRequest, RPCResponse } from "./types.js";
 import { VERSION } from "./version.js";
 
@@ -133,13 +133,15 @@ export class Leader {
           this.sendJSON(res, 200, resp.error ? { error: resp.error } : { data: { ...base, ...(resp.data as Record<string, unknown>) } });
           return;
         }
-
+        const batchParams = rpcReq.tool === "batch_mutation" && rpcReq.params
+          ? await resolveBatchIcons(rpcReq.params)
+          : rpcReq.params;
         const resp = await this.bridge.sendWithParams(
-          rpcReq.tool,
-          rpcReq.nodeIds,
-          rpcReq.params,
-          fileKey
-        );
+           rpcReq.tool,
+           rpcReq.nodeIds,
+          batchParams,
+           fileKey
+         );
 
         this.sendJSON(
           res,
