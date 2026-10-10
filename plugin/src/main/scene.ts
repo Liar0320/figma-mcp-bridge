@@ -119,7 +119,6 @@ function validateLayoutDeps(node:SceneSpec, parent?:SceneSpec, path:string[]=[no
     for (const axis of ["Horizontal","Vertical"] as const) {
       const childSize=axisSizing(node,axis);
       if (childSize === "FILL" && pMode !== "HORIZONTAL" && pMode !== "VERTICAL") fail(`${node.ref} FILL requires auto-layout parent`);
-      if (childSize === "FILL" && pMode === (axis === "Horizontal" ? "VERTICAL" : "HORIZONTAL")) fail(`${node.ref} FILL axis incompatible with parent layout`);
       if (childSize === "FILL" && axisSizing(parent,axis) === "HUG") fail(`${node.ref} FILL conflicts with parent HUG sizing`);
     }
   }
