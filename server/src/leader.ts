@@ -2,7 +2,8 @@ import http from "node:http";
 import type { Duplex } from "node:stream";
 import { Bridge } from "./bridge.js";
 import { validateRpc } from "./schema.js";
-import { executeSaveScreenshots } from "./tools.js";
+import { executeSaveScreenshots, resolveSceneIcons } from "./tools.js";
+import { resolveIconifyIcon } from "./iconify.js";
 import type { ExportFormat } from "./tools.js";
 import type { RPCRequest, RPCResponse } from "./types.js";
 import { VERSION } from "./version.js";
@@ -113,6 +114,34 @@ export class Leader {
             params.scale as number | undefined
           );
           this.sendJSON(res, 200, { data: result });
+          return;
+        }
+
+        if (rpcReq.tool === "create_scene") {
+          const params = rpcReq.params ?? {};
+          const resp = await this.bridge.sendWithParams("create_scene", undefined, { ...params, nodes: await resolveSceneIcons(params.nodes as Parameters<typeof resolveSceneIcons>[0]) }, fileKey);
+          this.sendJSON(res, 200, resp.error ? { error: resp.error } : { data: resp.data });
+          return;
+        }
+
+        if (rpcReq.tool === "create_icon") {
+          const params = rpcReq.params ?? {};
+          const icon = await resolveIconifyIcon(params.iconSet as string | undefined, params.name as string);
+          const base = {
+            iconSet: icon.iconSet,
+            name: icon.name,
+            source: "iconify",
+            sourceUrl: icon.sourceUrl,
+            size: params.size ?? 24,
+            ...(params.color ? { color: params.color } : {}),
+            dryRun: params.dryRun !== false,
+          };
+          if (params.dryRun !== false) {
+            this.sendJSON(res, 200, { data: base });
+            return;
+          }
+          const resp = await this.bridge.sendWithParams("create_icon", undefined, { ...params, svg: icon.svg }, fileKey);
+          this.sendJSON(res, 200, resp.error ? { error: resp.error } : { data: { ...base, ...(resp.data as Record<string, unknown>) } });
           return;
         }
 

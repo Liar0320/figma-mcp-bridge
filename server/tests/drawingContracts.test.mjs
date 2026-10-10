@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveSceneIcons } from "../dist/tools.js";
 import { toolInputSchemas } from "../dist/schema.js";
 
 test("scene rejects duplicate refs across different branches", () => {
@@ -68,6 +69,27 @@ test("create_scene accepts ICON nodes with bounded Iconify props", () => {
   });
   assert.equal(result.success, true);
   if (result.success) assert.equal(result.data.nodes[0].props.iconSet, "lucide");
+});
+
+test("resolveSceneIcons recursively adds resolved SVG payloads", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('<svg viewBox="0 0 24 24"></svg>', {
+    status: 200,
+    headers: { "content-type": "image/svg+xml" },
+  });
+  try {
+    const nodes = await resolveSceneIcons([
+      {
+        ref: "root",
+        type: "FRAME",
+        children: [{ ref: "icon", type: "ICON", props: { name: "activity" } }],
+      },
+    ]);
+    assert.equal(nodes[0].children?.[0].props?.iconSet, "lucide");
+    assert.match(String(nodes[0].children?.[0].props?.svg), /^<svg/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("measurement rejects zero or infinite widths and unsupported auto-resize overrides", () => {

@@ -7,6 +7,25 @@ import { toolInputSchemas } from "./schema.js";
 import type { BridgeResponse } from "./types.js";
 import { resolveIconifyIcon } from "./iconify.js";
 
+type SceneNodePayload = {
+  type: string;
+  props?: Record<string, unknown>;
+  children?: SceneNodePayload[];
+  [key: string]: unknown;
+};
+
+export async function resolveSceneIcons(nodes: SceneNodePayload[]): Promise<SceneNodePayload[]> {
+  return Promise.all(nodes.map(async (node) => {
+    if (node.type === "ICON") {
+      const props = node.props ?? {};
+      const icon = await resolveIconifyIcon(props.iconSet as string | undefined, props.name as string);
+      return { ...node, props: { ...props, iconSet: icon.iconSet, svg: icon.svg } };
+    }
+    if (!node.children) return node;
+    return { ...node, children: await resolveSceneIcons(node.children) };
+  }));
+}
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -105,6 +124,9 @@ export function registerTools(server: McpServer, node: Node): void {
     "Resolve an icon from Iconify and create it as an editable Figma SVG node. Defaults to the lucide icon set and dry-run; set dryRun=false to mutate Figma.",
     toolInputSchemas.create_icon.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => renderResponse(async () => {
+      if (node.roleName === "FOLLOWER") {
+        return node.sendWithParams("create_icon", undefined, params, fileKey);
+      }
       const resolved = await resolveIconifyIcon(params.iconSet, params.name);
       const base = {
         iconSet: resolved.iconSet,
@@ -125,15 +147,10 @@ export function registerTools(server: McpServer, node: Node): void {
     "Preflight and create nested editable Frame/Text/Rectangle/Instance/Icon scenes with native Auto Layout. ICON resolves from Iconify before plugin preflight and creates an editable SVG on live execution. Defaults to dry-run; dryRun=false creates nodes. The optional parentId may reference the current PAGE or a container on it. Failure cleans only this scene's newly created nodes. Maximum 100 nodes and 16 levels. Iconify SVG validation is limited to response shape, not a complete SVG security audit.",
     toolInputSchemas.create_scene.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => renderResponse(async () => {
-      const resolveNodes = async (nodes: typeof params.nodes): Promise<typeof params.nodes> => Promise.all(nodes.map(async (node) => {
-        if (node.type === "ICON") {
-          const props = node.props as { iconSet?: string; name: string; size?: number; color?: string; nodeName?: string; x?: number; y?: number };
-          const icon = await resolveIconifyIcon(props.iconSet, props.name);
-          return { ...node, props: { ...props, iconSet: icon.iconSet, svg: icon.svg } };
-        }
-        return node.children ? { ...node, children: await resolveNodes(node.children) } : node;
-      }));
-      return node.sendWithParams("create_scene", undefined, { ...params, nodes: await resolveNodes(params.nodes) }, fileKey);
+      if (node.roleName === "FOLLOWER") {
+        return node.sendWithParams("create_scene", undefined, params, fileKey);
+      }
+      return node.sendWithParams("create_scene", undefined, { ...params, nodes: await resolveSceneIcons(params.nodes) }, fileKey);
     })
   );
   server.tool(
