@@ -127,19 +127,8 @@ export class Leader {
         if (rpcReq.tool === "create_icon") {
           const params = rpcReq.params ?? {};
           const icon = await resolveIconifyIcon(params.iconSet as string | undefined, params.name as string);
-          const base = {
-            iconSet: icon.iconSet,
-            name: icon.name,
-            source: "iconify",
-            sourceUrl: icon.sourceUrl,
-            size: params.size ?? 24,
-            ...(params.color ? { color: params.color } : {}),
-            dryRun: params.dryRun !== false,
-          };
-          if (params.dryRun !== false) {
-            this.sendJSON(res, 200, { data: base });
-            return;
-          }
+          const base = { iconSet: icon.iconSet, name: icon.name, source: icon.source, ...(icon.sourceUrl ? { sourceUrl: icon.sourceUrl } : {}), size: params.size ?? 24, ...(params.color ? { color: params.color } : {}), dryRun: params.dryRun !== false };
+          if (params.dryRun !== false) { this.sendJSON(res, 200, { data: base }); return; }
           const resp = await this.bridge.sendWithParams("create_icon", undefined, { ...params, svg: icon.svg }, fileKey);
           this.sendJSON(res, 200, resp.error ? { error: resp.error } : { data: { ...base, ...(resp.data as Record<string, unknown>) } });
           return;

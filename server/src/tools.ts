@@ -19,7 +19,16 @@ export async function resolveSceneIcons(nodes: SceneNodePayload[]): Promise<Scen
     if (node.type === "ICON") {
       const props = node.props ?? {};
       const icon = await resolveIconifyIcon(props.iconSet as string | undefined, props.name as string);
-      return { ...node, props: { ...props, iconSet: icon.iconSet, svg: icon.svg } };
+      return {
+        ...node,
+        props: {
+          ...props,
+          iconSet: icon.iconSet,
+          svg: icon.svg,
+          source: icon.source,
+          ...(icon.sourceUrl ? { sourceUrl: icon.sourceUrl } : {}),
+        },
+      };
     }
     if (!node.children) return node;
     return { ...node, children: await resolveSceneIcons(node.children) };
@@ -121,18 +130,16 @@ type WriteToolName = keyof Pick<
 export function registerTools(server: McpServer, node: Node): void {
   server.tool(
     "create_icon",
-    "Resolve an icon from Iconify and create it as an editable Figma SVG node. Defaults to the lucide icon set and dry-run; set dryRun=false to mutate Figma.",
+    "Resolve a bundled Lucide icon or Iconify icon and create it as an editable Figma SVG node. Source mode is controlled by FIGMA_BRIDGE_ICON_SOURCE (bundled, fallback, or remote); dry-run is the default.",
     toolInputSchemas.create_icon.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => renderResponse(async () => {
-      if (node.roleName === "FOLLOWER") {
-        return node.sendWithParams("create_icon", undefined, params, fileKey);
-      }
+      if (node.roleName === "FOLLOWER") return node.sendWithParams("create_icon", undefined, params, fileKey);
       const resolved = await resolveIconifyIcon(params.iconSet, params.name);
       const base = {
         iconSet: resolved.iconSet,
         name: resolved.name,
-        source: "iconify",
-        sourceUrl: resolved.sourceUrl,
+        source: resolved.source,
+        ...(resolved.sourceUrl ? { sourceUrl: resolved.sourceUrl } : {}),
         size: params.size ?? 24,
         ...(params.color ? { color: params.color } : {}),
         dryRun: params.dryRun !== false,

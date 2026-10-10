@@ -117,9 +117,24 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 
 Use `find_canvas_slot` before designing to query a position without reading the full page tree, for example `{ "width": 480, "height": 600, "direction": "right", "spacing": 80 }`. `nearNodeId` requests placement beside a current-page reference node. `create_frame` and `create_scene` accept `position: "auto"`; `create_scene` requires exactly one root `FRAME`. When `parentId` is omitted or set to the current page, slots are computed across top-level content on the canvas; when `parentId` references an existing container (such as a Frame), slots are calculated relative to that container's direct children. `create_scene` dry-run output includes the planned coordinates and strategy; explicit root `x`/`y` cannot be combined with auto. Existing explicit coordinates are unchanged.
 
+Example ICON scene (Lucide icons resolve from the bundled `@iconify-json/lucide` package by default; SVG trust validation is limited to response shape):
 
-Write tools are intentionally scoped to the current page and a deterministic subset of Figma mutations so AI-driven edits remain easier to validate and safer to automate. Component support covers creating Component nodes, creating local `componentId` instances, combining two or more existing local Components into a native `COMPONENT_SET` via `combine_as_variants` (`componentIds`, optional `parentId`, `name`, `x`, `y`, `key`), managing variant names/properties on components inside a component set, managing component property definitions, setting instance component properties, and toggling exposed nested instances. `set_variant_properties` updates variants by renaming the target component to Figma's `Property=Value` syntax; `manage_component_properties` follows Figma Plugin API limits (for example, deleting `VARIANT` definitions is not supported by Figma). `set_exposed_instance` also follows Figma's native eligibility rules: the target must be an eligible nested instance inside a component/component set and may need exposed nested instances or children with component property references. Remote library import by component key remains out of scope for this pass.
-Example ICON scene (Iconify resolution happens during both dry-run and live execution; SVG trust validation is limited to Iconify response shape):
+```json
+{
+  "nodes": [{
+    "ref": "card",
+    "type": "FRAME",
+    "props": { "width": 240, "height": 120, "layoutMode": "HORIZONTAL", "padding": { "top": 16, "right": 16, "bottom": 16, "left": 16 } },
+    "children": [{ "ref": "activityIcon", "type": "ICON", "props": { "name": "activity", "size": 24, "color": "#3D6DFF" } }]
+  }],
+  "dryRun": true
+}
+```
+
+Icon source selection is controlled with `FIGMA_BRIDGE_ICON_SOURCE` (server process environment): `fallback` (default) uses bundled Lucide when the icon is available and falls back to Iconify over the network; `bundled` is offline-only and fails clearly for unknown/non-Lucide icons; `remote` always uses Iconify. Bundled responses report `source: "bundled"` and omit `sourceUrl`; remote responses report `source: "remote"` and include the Iconify URL. The server ships `@iconify-json/lucide` version `1.2.142` (ISC license), so only the Lucide collection is bundled; other Iconify sets still require remote mode/network access. `currentColor` remains in the SVG and the existing `color` parameter is applied by the plugin.
+
+`create_icon` and `create_scene` ICON use the same resolver and preserve dry-run, parent, position, refs, and rollback behavior.
+
 
 ```json
 {
