@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Bridge } from "../dist/bridge.js";
 import { toolInputSchemas } from "../dist/schema.js";
+import { Leader } from "../dist/leader.js";
+import { Follower } from "../dist/follower.js";
 
 class FakeSocket {
   constructor(fileKey) {
     this.fileKey = fileKey;
+    this.lastRequest = undefined;
     this.readyState = 1;
     this.handlers = new Map();
     this.closed = false;
@@ -22,12 +25,14 @@ class FakeSocket {
 
   send(payload, cb) {
     const request = JSON.parse(payload);
+    this.lastRequest = request;
     queueMicrotask(() => {
       this.handlers.get("message")?.(
         Buffer.from(
           JSON.stringify({
             type: request.type,
             requestId: request.requestId,
+            params: request.params,
             data: { fileKey: this.fileKey, requestType: request.type },
           })
         )
@@ -161,6 +166,28 @@ test("bridge routes explicit fileKey and fails closed when ambiguous", async () 
   );
 
   bridge.close();
+});
+
+test("follower ICON scene reaches plugin with resolved SVG", async () => {
+  const leader = new Leader(0);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (url, options) => String(url).startsWith("https://api.iconify.design/")
+    ? Promise.resolve(new Response('<svg viewBox="0 0 24 24"></svg>', { status: 200 }))
+    : originalFetch(url, options);
+  try {
+    await leader.start();
+    const socket = attach(leader.getBridge(), "file-a", "File A");
+    const follower = new Follower(`http://localhost:${leader.server.address().port}`);
+    await follower.sendWithParams("create_scene", undefined, {
+      nodes: [{ ref: "root", type: "FRAME", children: [{ ref: "icon", type: "ICON", props: { name: "activity" } }] }],
+      dryRun: true,
+    }, "file-a");
+    assert.equal(socket.lastRequest.params.nodes[0].children[0].props.iconSet, "lucide");
+    assert.match(socket.lastRequest.params.nodes[0].children[0].props.svg, /^<svg/);
+  } finally {
+    leader.stop();
+    globalThis.fetch = originalFetch;
+  }
 });
 
 

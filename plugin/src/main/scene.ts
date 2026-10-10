@@ -1,7 +1,7 @@
 import { findCanvasSlot } from "./canvasSlot";
 import { handleWriteRequest, validateWriteToolParams } from "./write";
 
-type NodeType = "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE";
+type NodeType = "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE" | "ICON";
 type SceneSpec = { ref: string; type: NodeType; props: Record<string, unknown>; children: SceneSpec[] };
 type FontDescriptor = { family: string; style: string };
 type FontResolutionWarning = {
@@ -71,10 +71,10 @@ export async function resolveFontDescriptor(
 
 const SIZE_KEYS = ["layoutSizingHorizontal","layoutSizingVertical","primaryAxisSizingMode","counterAxisSizingMode","minWidth","maxWidth","minHeight","maxHeight"];
 const CONTAINER = ["name","x","y","width","height","fills","strokes","cornerRadius","clipsContent","padding","itemSpacing",...LAYOUT];
-const ALLOWED: Record<NodeType,string[]> = { FRAME: CONTAINER, TEXT:["name","x","y","width","height","characters","style","fills",...LAYOUT], RECTANGLE:["name","x","y","width","height","fills","strokes","cornerRadius",...LAYOUT], INSTANCE:["name","x","y","width","height","componentId","properties",...LAYOUT] };
+const ALLOWED: Record<NodeType,string[]> = { FRAME: CONTAINER, TEXT:["name","x","y","width","height","characters","style","fills",...LAYOUT], RECTANGLE:["name","x","y","width","height","fills","strokes","cornerRadius",...LAYOUT], INSTANCE:["name","x","y","width","height","componentId","properties",...LAYOUT], ICON:["iconSet","name","size","color","nodeName","x","y","svg"] };
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 function fail(message:string, code="INVALID_INPUT", details?:unknown): never { throw Object.assign(new Error(message), { mutationError:{ code, message, details } }); }
-const writeType = (t:NodeType) => ({FRAME:"create_frame",TEXT:"create_text",RECTANGLE:"create_rectangle",INSTANCE:"create_instance"}[t]);
+const writeType = (t:NodeType) => ({FRAME:"create_frame",TEXT:"create_text",RECTANGLE:"create_rectangle",INSTANCE:"create_instance",ICON:"create_icon"}[t]);
 
 function parseTree(raw: unknown, depth:number, refs:Set<string>, state:{count:number}, parent?:SceneSpec): SceneSpec {
   if (!isObj(raw)) fail("Each node must be an object");
@@ -84,7 +84,7 @@ function parseTree(raw: unknown, depth:number, refs:Set<string>, state:{count:nu
   const ref=raw.ref, type=raw.type;
   if (typeof ref!=="string" || !REF_RE.test(ref)) fail("ref must match /^[A-Za-z][A-Za-z0-9_-]{0,63}$/");
   if (refs.has(ref)) fail(`Duplicate ref: ${ref}`); refs.add(ref);
-  if (!["FRAME","TEXT","RECTANGLE","INSTANCE"].includes(type as string)) fail(`Unsupported node type: ${String(type)}`);
+  if (!["FRAME","TEXT","RECTANGLE","INSTANCE","ICON"].includes(type as string)) fail(`Unsupported node type: ${String(type)}`);
   const props = raw.props === undefined ? {} : raw.props;
   if (!isObj(props)) fail(`${ref}.props must be an object`);
   for (const k of Object.keys(props)) if (!(ALLOWED[type as NodeType] || []).includes(k) || ["parentId","ref"].includes(k)) fail(`Unknown or forbidden property ${k} on ${type}`);
@@ -92,6 +92,7 @@ function parseTree(raw: unknown, depth:number, refs:Set<string>, state:{count:nu
     const styleAllowed=["fontFamily","fontStyle","fontSize","lineHeight","letterSpacing","textDecoration","textAlignHorizontal","textAlignVertical","textAutoResize"];
     for (const k of Object.keys(props.style)) if (!styleAllowed.includes(k)) fail(`Unknown style property ${k}`);
   }
+  if (type === "ICON" && (typeof props.name !== "string" || !props.name.trim() || typeof props.svg !== "string")) fail(`${ref}.props requires a resolved Iconify name and SVG`);
   const childrenRaw = raw.children === undefined ? [] : raw.children;
   if (!Array.isArray(childrenRaw)) fail(`${ref}.children must be an array`);
   if (type !== "FRAME" && childrenRaw.length) fail(`${type} nodes cannot have children`);
@@ -155,7 +156,7 @@ async function preflight(roots:SceneSpec[], parentId?:string) {
   };
   normalized.forEach(visit);
   for (const n of all) {
-    validateWriteToolParams(writeType(n.type), undefined, n.type === "INSTANCE" ? { ...n.props, componentId: n.props.componentId } : { ...n.props });
+    validateWriteToolParams(writeType(n.type), undefined, { ...n.props });
     if (n.type === "INSTANCE") {
       const id = n.props.componentId;
       if (typeof id !== "string" || !/^\d+:\d+$/.test(id)) fail(`${n.ref}.props.componentId is required`);

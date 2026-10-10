@@ -279,19 +279,27 @@ const sceneProps = createNodeBase.omit({ parentId: true, key: true }).extend({
   properties: componentPropertyMap.optional(),
 }).strict();
 
+const sceneIconProps = z.object({
+  iconSet: z.string().min(1).max(64).optional().default("lucide"),
+  name: z.string().min(1).max(128),
+  size: z.number().finite().positive().max(4096).optional().default(24),
+  color: hexColor.optional(),
+  nodeName: z.string().min(1).max(200).optional(),
+  x: z.number().finite().optional(),
+  y: z.number().finite().optional(),
+}).strict();
+
 type SceneNodeInput = {
   ref: string;
-  type: "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE";
-  props?: z.infer<typeof sceneProps>;
+  type: "FRAME" | "TEXT" | "RECTANGLE" | "INSTANCE" | "ICON";
+  props?: z.infer<typeof sceneProps> | z.infer<typeof sceneIconProps>;
   children?: SceneNodeInput[];
 };
 
-const sceneNode: z.ZodType<SceneNodeInput> = z.lazy(() => z.object({
-  ref: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
-  type: z.enum(["FRAME", "TEXT", "RECTANGLE", "INSTANCE"]),
-  props: sceneProps.optional(),
-  children: z.array(sceneNode).max(100).optional(),
-}).strict());
+const sceneNode: z.ZodType<SceneNodeInput> = z.lazy(() => z.union([
+  z.object({ ref: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/), type: z.enum(["FRAME", "TEXT", "RECTANGLE", "INSTANCE"]), props: sceneProps.optional(), children: z.array(sceneNode).max(100).optional() }).strict(),
+  z.object({ ref: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/), type: z.literal("ICON"), props: sceneIconProps, children: z.array(sceneNode).max(0).optional() }).strict(),
+]));
 
 // Bound the recursive input before Zod descends into it.
 const sceneNodes = z.preprocess((value, ctx) => {
