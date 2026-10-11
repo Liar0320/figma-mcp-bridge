@@ -339,14 +339,20 @@ function createMockFigma() {
         },
       })
     );
+  const createNodeFromSvg = (svg) => {
+    const node = createFrame();
+    node.svg = svg;
+    return node;
+  };
 
   return {
     root: documentNode,
     currentPage: page,
+    createFrame,
     createTestPage(name = `Page ${documentNode.children.length + 1}`) {
       return createPageNode(createNodeId(), name);
     },
-    createFrame,
+    createNodeFromSvg,
     createComponent,
     combineAsVariants,
     createRectangle,
@@ -1872,6 +1878,22 @@ async function testSetVariantPropertiesRejectsStandaloneComponent() {
   );
 }
 
+async function testBatchCreateIconSupportsInlineSvgAndRefs() {
+  globalThis.figma = createMockFigma();
+  const result = await handleWriteRequest("batch_mutation", undefined, {
+    failureMode: "atomic",
+    compact: false,
+    operations: [
+      { type: "create_icon", ref: "tmp:icon", params: { svg: "<svg></svg>", nodeName: "Inline" } },
+      { type: "set_node_name", nodeId: "tmp:icon", params: { name: "Renamed" } },
+    ],
+  });
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.createdRefs["tmp:icon"], result.results[0].nodeId);
+  const node = await globalThis.figma.getNodeByIdAsync(result.results[0].nodeId);
+  assert.equal(node.name, "Renamed");
+}
+
 async function testCreateFrameAutoPositionAndValidation() {
   globalThis.figma = createMockFigma();
   const existing = await handleWriteRequest("create_frame", undefined, { name: "Existing" });
@@ -1898,10 +1920,11 @@ async function testCreateFrameAutoPositionAndValidation() {
   );
 }
 
-
 /** Runs the write-tool test cases and reports a simple pass/fail summary. */
 async function runTests() {
+
   const tests = [
+    ["testBatchCreateIconSupportsInlineSvgAndRefs", testBatchCreateIconSupportsInlineSvgAndRefs],
     ["testCreateFrameAutoPositionAndValidation", testCreateFrameAutoPositionAndValidation],
     ["testCompactDefaultsAndExplicitFullResults", testCompactDefaultsAndExplicitFullResults],
     ["testCreateFrameParentResolution", testCreateFrameParentResolution],
