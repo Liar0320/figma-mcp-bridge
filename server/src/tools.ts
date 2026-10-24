@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { Node } from "./node.js";
+import { executeScript } from "./scriptRunner.js";
 import { toolInputSchemas } from "./schema.js";
 import type { BridgeResponse } from "./types.js";
 import { resolveIconifyIcon } from "./iconify.js";
@@ -166,6 +167,19 @@ type WriteToolName = keyof Pick<
 
 /** Registers all read and write MCP tools exposed by the bridge server. */
 export function registerTools(server: McpServer, node: Node): void {
+  server.tool(
+    "execute_script",
+    "Execute a persisted JavaScript coding-create script through a restricted Figma SDK. The script is stored under the server artifact directory; host filesystem, process, child-process, and network APIs are not exposed. Prefer this for reproducible multi-step UI creation.",
+    toolInputSchemas.execute_script.shape,
+    async (args): Promise<ToolResult> => {
+      const { fileKey, ...params } = args as z.infer<typeof toolInputSchemas.execute_script>;
+      const report = await executeScript(node, { ...params, fileKey });
+      return {
+        content: [{ type: "text", text: JSON.stringify(report) }],
+        ...(report.ok ? {} : { isError: true }),
+      };
+    }
+  );
   server.tool(
     "create_icon",
     "Resolve a bundled Lucide icon or Iconify icon and create it as an editable Figma SVG node. Source mode is controlled by FIGMA_BRIDGE_ICON_SOURCE (bundled, fallback, or remote); dry-run is the default.",
