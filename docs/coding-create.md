@@ -1,9 +1,52 @@
 # Coding-create scripts
 
-The server exposes an `execute_script` MCP capability for multi-step UI creation. It persists inline JavaScript under the server's local `artifacts/scripts/` directory, then runs it with a restricted `figma` SDK that forwards allowlisted operations through the existing bridge. Scripts are intended to be saved, rerun, and edited when a step fails.
+`execute_script` is the reproducible coding-create entrypoint. It persists inline JavaScript under the server's local `artifacts/scripts/` directory and runs it with a restricted `figma` SDK. Scripts can be saved, rerun, and edited when a step fails.
 
-The SDK includes common creation, mutation, query, and batch methods. Each call is recorded in the returned run report with a step index, operation name, and status. Errors include the saved script path, step context, and the underlying bridge error when available.
+## Choose the highest useful level
 
-This is not unrestricted JavaScript execution. Script code runs in a constrained VM context without host `process`, filesystem, child-process, or network APIs. The runner enforces a bounded timeout and only reads or writes paths inside the server artifact root. `fileKey` is passed to each bridge call for multi-file routing.
+- **Declarative:** use `createComponentSet` for a new variant matrix. It accepts `dimensions`, sparse `variants`/`exclusions`, component `properties`, visual/layout templates, and performs postflight verification.
+- **Asset:** use `createIcon` for bundled or Iconify icons; it creates an editable SVG node.
+- **Primitive:** use `createFrame`, `createText`, `createRectangle`, setters, and `batch` for custom layouts or local fixes. Use `batch` for static ordered mutations.
+- **Existing components:** use `combineAsVariants` only when components already exist. Do not manually create every variant for a new matrix.
+- **Verification:** use `getNode`, `findNodes`, `validateLayout`, and `verifyComponentSet` after writes when the result matters.
 
-Use direct MCP tools for short one-off operations. Prefer `execute_script` for multi-step, reproducible coding-create work. Existing mutations to nodes are not fully transactional; `batch_mutation` retains its existing creation rollback behavior.
+`dimensions` define native VARIANT axes. `properties` define component properties such as `TEXT`, `BOOLEAN`, and `INSTANCE_SWAP`; a `TEXT` property named `Label` is bound to generated labels by `createComponentSet`.
+
+## Example
+
+```js
+const icon = await figma.createIcon({
+  name: "sparkles",
+  iconSet: "lucide",
+  size: 24,
+  color: "#2563EB",
+  dryRun: false,
+});
+
+const button = await figma.createComponentSet({
+  target: {
+    name: "Button",
+    dimensions: [
+      { name: "Type", values: ["Default", "Destructive", "Outline"] },
+      { name: "Size", values: ["Small", "Default", "Large"] },
+    ],
+    variants: [
+      { Type: "Default", Size: "Default" },
+      { Type: "Destructive", Size: "Default" },
+      { Type: "Outline", Size: "Default" },
+      { Type: "Default", Size: "Small" },
+      { Type: "Default", Size: "Large" },
+    ],
+    properties: [{ name: "Label", type: "TEXT", defaultValue: "Button" }],
+  },
+  dryRun: false,
+});
+
+const health = await figma.verifyComponentSet(button.componentSetId);
+```
+
+## Safety and debugging
+
+This is not unrestricted JavaScript. Scripts do not receive host `process`, filesystem, child-process, or network APIs. Paths stay inside the server artifact root and execution has a bounded timeout. Each SDK call records its operation, source location, parameters, result, and normalized error. `fileKey` is passed to every bridge call for multi-file routing.
+
+Use direct MCP tools for short one-off operations. Existing mutations are not fully transactional; `batch` retains its creation rollback behavior.

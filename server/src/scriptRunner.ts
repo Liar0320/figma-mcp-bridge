@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
 import type { Node } from "./node.js";
+import { resolveIconifyIcon } from "./iconify.js";
 import type { BridgeResponse } from "./types.js";
 
 const SCRIPT_ROOT = path.resolve(process.cwd(), "artifacts", "scripts");
@@ -58,12 +59,21 @@ type ScriptSdk = {
   createFrame(params: Record<string, unknown>): Promise<unknown>;
   createText(params: Record<string, unknown>): Promise<unknown>;
   createRectangle(params: Record<string, unknown>): Promise<unknown>;
+  createIcon(params: Record<string, unknown>): Promise<unknown>;
+  createComponent(params: Record<string, unknown>): Promise<unknown>;
+  createInstance(params: Record<string, unknown>): Promise<unknown>;
+  createComponentSet(params: Record<string, unknown>): Promise<unknown>;
+  combineAsVariants(params: Record<string, unknown>): Promise<unknown>;
+  setVariantProperties(params: Record<string, unknown>): Promise<unknown>;
   setPosition(nodeId: string, params: Record<string, unknown>): Promise<unknown>;
   setSize(nodeId: string, params: Record<string, unknown>): Promise<unknown>;
   setFills(nodeId: string, params: Record<string, unknown>): Promise<unknown>;
   setTextContent(nodeId: string, params: Record<string, unknown>): Promise<unknown>;
   setLayoutMode(nodeId: string, params: Record<string, unknown>): Promise<unknown>;
   findNodes(params: Record<string, unknown>): Promise<unknown>;
+  getNode(nodeId: string, params?: Record<string, unknown>): Promise<unknown>;
+  validateLayout(params: Record<string, unknown>): Promise<unknown>;
+  verifyComponentSet(componentSetId: string): Promise<unknown>;
   batch(params: Record<string, unknown>): Promise<unknown>;
 };
 
@@ -167,16 +177,29 @@ function createSdk(
     }
   };
 
+  const createIcon = async (params: Record<string, unknown>): Promise<unknown> => {
+    return call("create_icon", params);
+  };
+
   return {
     createFrame: (params) => call("create_frame", params),
     createText: (params) => call("create_text", params),
     createRectangle: (params) => call("create_rectangle", params),
+    createIcon,
+    createComponent: (params) => call("create_component", params),
+    createInstance: (params) => call("create_instance", params),
+    createComponentSet: (params) => call("create_component_set", params),
+    combineAsVariants: (params) => call("combine_as_variants", params),
+    setVariantProperties: (params) => call("set_variant_properties", params),
     setPosition: (nodeId, params) => call("set_position", params, [nodeId]),
     setSize: (nodeId, params) => call("set_size", params, [nodeId]),
     setFills: (nodeId, params) => call("set_fills", params, [nodeId]),
     setTextContent: (nodeId, params) => call("set_text_content", params, [nodeId]),
     setLayoutMode: (nodeId, params) => call("set_layout_mode", params, [nodeId]),
     findNodes: (params) => call("find_nodes", params),
+    getNode: (nodeId, params = {}) => call("get_node", params, [nodeId]),
+    validateLayout: (params) => call("validate_layout", params),
+    verifyComponentSet: (componentSetId) => call("verify_component_set", {}, [componentSetId]),
     batch: (params) => call("batch_mutation", params),
   };
 }

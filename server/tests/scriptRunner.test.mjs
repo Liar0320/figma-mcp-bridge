@@ -67,3 +67,16 @@ test("execute_script does not expose host process or require", async () => {
   assert.equal(report.result.require, "undefined");
   assert.equal(report.result.figma, "object");
 });
+
+
+test("execute_script routes high-level icon, matrix, and verification methods", async () => {
+  const fake = fakeNode();
+  const report = await executeScript(fake, {
+    input: "const icon = await figma.createIcon({ name: 'sparkles' }); const set = await figma.createComponentSet({ target: { name: 'Button' }, dryRun: false }); return await figma.verifyComponentSet(set.componentSetId);",
+    fileKey: "file:test",
+  });
+  assert.equal(report.ok, true);
+  assert.deepEqual(fake.calls.map((call) => call.tool), ["create_icon", "create_component_set", "verify_component_set"]);
+  assert.equal(fake.calls.every((call) => call.fileKey === "file:test"), true);
+  assert.equal(report.events.every((event) => event.status === "succeeded"), true);
+});
