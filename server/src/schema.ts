@@ -362,6 +362,11 @@ export const toolInputSchemas = {
     nodeName: z.string().min(1).max(200).optional(),
     dryRun: z.boolean().optional().default(true).describe("Preview only by default; false creates the Figma node."),
   }).strict(),
+  execute_script: withFileKey({
+    filePath: z.string().min(1).max(240).optional().describe("Relative .mjs/.js path under the server script artifact directory."),
+    input: z.string().min(1).max(1_000_000).optional().describe("JavaScript source persisted before execution."),
+    timeoutMs: z.number().int().min(1).max(120_000).optional().describe("Execution timeout in milliseconds; capped at 120000."),
+  }).strict(),
   create_scene: withFileKey({
     parentId: figmaNodeId.optional().describe("Omit for current page, or specify the current PAGE ID or a container on that page; other pages are out of scope."),
     nodes: sceneNodes.describe("Nested scene with globally unique local refs; at most 100 nodes and 16 levels. Only FRAME nodes accept children. ABSOLUTE requires a HORIZONTAL or VERTICAL auto-layout parent; current PAGE and NONE-layout parents fail preflight."),
@@ -852,6 +857,7 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  execute_script: (_nodeIds, params) => ({ ...params }),
   create_icon: (_nodeIds, params) => ({ ...params }),
   create_scene: (_nodeIds, params) => ({ ...params }),
   measure_text: (_nodeIds, params) => ({ ...params }),
