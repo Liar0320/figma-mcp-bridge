@@ -169,7 +169,7 @@ type WriteToolName = keyof Pick<
 export function registerTools(server: McpServer, node: Node): void {
   server.tool(
     "execute_script",
-    "Execute a persisted JavaScript coding-create script through a restricted Figma SDK. The script is stored under the server artifact directory; host filesystem, process, child-process, and network APIs are not exposed. Prefer this for reproducible multi-step UI creation.",
+    "Execute a persisted JavaScript coding-create script through a restricted Figma SDK. Prefer high-level methods: createIcon for icons, createComponentSet for new variant matrices and properties, batch for static low-level operations, and setters for local fixes. Use combineAsVariants only for existing components. Verification methods include getNode, validateLayout, and verifyComponentSet. The script is stored under the server artifact directory; host filesystem, process, child-process, and network APIs are not exposed.",
     toolInputSchemas.execute_script.shape,
     async (args): Promise<ToolResult> => {
       const { fileKey, ...params } = args as z.infer<typeof toolInputSchemas.execute_script>;
